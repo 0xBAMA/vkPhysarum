@@ -88,8 +88,8 @@ void PrometheusInstance::Draw () {
 	VkCommandBufferBeginInfo cmdBeginInfo = vkinit::command_buffer_begin_info( VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT );
 
 	// this is for render scaling
-	drawExtent.height = std::min( swapchainExtent.height, drawImage.imageExtent.height ) * renderScale;
-	drawExtent.width = std::min( swapchainExtent.width, drawImage.imageExtent.width ) * renderScale;
+	drawExtent.height = uint32_t( std::min( swapchainExtent.height, drawImage.imageExtent.height ) * renderScale );
+	drawExtent.width = uint32_t( std::min( swapchainExtent.width, drawImage.imageExtent.width ) * renderScale );
 
 	// start the command buffer recording
 	VK_CHECK( vkBeginCommandBuffer( cmd, &cmdBeginInfo ) );
@@ -245,11 +245,6 @@ void PrometheusInstance::ShutDown () {
 
 		for ( auto& s : swapchainPresentSemaphores ) {
 			vkDestroySemaphore( device, s, nullptr );
-		}
-
-		for ( auto& mesh : testMeshes ) {
-			destroyBuffer( mesh->meshBuffers.indexBuffer );
-			destroyBuffer( mesh->meshBuffers.vertexBuffer );
 		}
 
 		// destroy any remaining global resources
@@ -480,13 +475,8 @@ void PrometheusInstance::initDescriptors  () {
 }
 
 void PrometheusInstance::initPipelines () {
-	// compute pipelines
-	initBackgroundPipelines();
-
 	// graphics pipelines
-	initTrianglePipeline();
-	initMeshPipeline();
-	metalRoughMaterial.buildPipelines( this );
+	initBufferPresentPipeline();
 }
 
 void PrometheusInstance::initBackgroundPipelines () {
@@ -547,19 +537,31 @@ void PrometheusInstance::initBackgroundPipelines () {
 	});
 }
 
-void PrometheusInstance::initTrianglePipeline () {
-	VkShaderModule triangleFragShader;
-	if ( !vkutil::load_shader_module( "../shaders/colored_triangle.frag.spv", device, &triangleFragShader ) ) {
-		fmt::print( "Error when building the triangle fragment shader module\n" );
+void PrometheusInstance::initAgentUpdatePipeline () {
+
+}
+
+void PrometheusInstance::initAgentRasterPipeline () {
+
+}
+
+void PrometheusInstance::initBufferBlurPipeline () {
+
+}
+
+void PrometheusInstance::initBufferPresentPipeline () {
+	VkShaderModule bufferPresentFragShader;
+	if ( !vkutil::load_shader_module( "../shaders/bufferPresentFS.spv", device, &bufferPresentFragShader ) ) {
+		fmt::print( "Error when building the buffer present fragment shader module\n" );
 	} else {
-		fmt::print( "Triangle fragment shader successfully loaded\n" );
+		fmt::print( "Buffer present fragment shader successfully loaded\n" );
 	}
 
-	VkShaderModule triangleVertexShader;
-	if ( !vkutil::load_shader_module( "../shaders/colored_triangle.vert.spv", device, &triangleVertexShader ) ) {
-		fmt::print( "Error when building the triangle vertex shader module\n" );
+	VkShaderModule bufferPresentVertexShader;
+	if ( !vkutil::load_shader_module( "../shaders/bufferPresentVS.spv", device, &bufferPresentVertexShader ) ) {
+		fmt::print( "Error when building the buffer present vertex shader module\n" );
 	} else {
-		fmt::print( "Triangle vertex shader successfully loaded\n" );
+		fmt::print( "Buffer present vertex shader successfully loaded\n" );
 	}
 
 	//build the pipeline layout that controls the inputs/outputs of the shader
@@ -571,19 +573,12 @@ void PrometheusInstance::initTrianglePipeline () {
 
 	//use the triangle layout we created
 	pipelineBuilder._pipelineLayout = trianglePipelineLayout;
-	//connecting the vertex and pixel shaders to the pipeline
-	pipelineBuilder.set_shaders( triangleVertexShader, triangleFragShader );
-	//it will draw triangles
+	pipelineBuilder.set_shaders( bufferPresentVertexShader, bufferPresentFragShader );
 	pipelineBuilder.set_input_topology( VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST );
-	//filled triangles
 	pipelineBuilder.set_polygon_mode( VK_POLYGON_MODE_FILL );
-	//no backface culling
 	pipelineBuilder.set_cull_mode( VK_CULL_MODE_NONE, VK_FRONT_FACE_CLOCKWISE );
-	//no multisampling
 	pipelineBuilder.set_multisampling_none();
-	//no blending
 	pipelineBuilder.disable_blending();
-	//no depth testing
 	pipelineBuilder.disable_depthtest();
 
 	//connect the image format we will draw into, from draw image
@@ -594,82 +589,12 @@ void PrometheusInstance::initTrianglePipeline () {
 	trianglePipeline = pipelineBuilder.build_pipeline( device );
 
 	//clean structures
-	vkDestroyShaderModule( device, triangleFragShader, nullptr );
-	vkDestroyShaderModule( device, triangleVertexShader, nullptr );
+	vkDestroyShaderModule( device, bufferPresentFragShader, nullptr );
+	vkDestroyShaderModule( device, bufferPresentVertexShader, nullptr );
 
 	mainDeletionQueue.push_function( [ & ] ()  {
 		vkDestroyPipelineLayout( device, trianglePipelineLayout, nullptr );
 		vkDestroyPipeline( device, trianglePipeline, nullptr );
-	});
-}
-
-void PrometheusInstance::initMeshPipeline () {
-	VkShaderModule meshFragShader;
-	if ( !vkutil::load_shader_module( "../shaders/tex_img.frag.spv", device, &meshFragShader ) ) {
-		fmt::print( "Error when building the triangle fragment shader module\n" );
-	} else {
-		fmt::print( "Triangle fragment shader successfully loaded\n" );
-	}
-
-	VkShaderModule meshVertexShader;
-	if ( !vkutil::load_shader_module( "../shaders/colored_triangle_mesh.vert.spv", device, &meshVertexShader ) ) {
-		fmt::print( "Error when building the triangle vertex shader module\n" );
-	} else {
-		fmt::print( "Triangle vertex shader successfully loaded\n" );
-	}
-
-	//build the pipeline layout that controls the inputs/outputs of the shader
-	//we are not using descriptor sets or other systems yet, so no need to use anything other than empty default
-
-	VkPushConstantRange bufferRange{};
-	bufferRange.offset = 0;
-	bufferRange.size = sizeof( GPUDrawPushConstants );
-	bufferRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
-
-	VkPipelineLayoutCreateInfo pipeline_layout_info = vkinit::pipeline_layout_create_info();
-	pipeline_layout_info.pPushConstantRanges = &bufferRange;
-	pipeline_layout_info.pushConstantRangeCount = 1;
-
-	// descriptor for the single image sampler
-	pipeline_layout_info.pSetLayouts = &singleImageDescriptorLayout;
-	pipeline_layout_info.setLayoutCount = 1;
-
-	VK_CHECK( vkCreatePipelineLayout( device, &pipeline_layout_info, nullptr, &meshPipelineLayout ) );
-
-	PipelineBuilder pipelineBuilder;
-
-	//use the triangle layout we created
-	pipelineBuilder._pipelineLayout = meshPipelineLayout;
-	//connecting the vertex and pixel shaders to the pipeline
-	pipelineBuilder.set_shaders( meshVertexShader, meshFragShader );
-	//it will draw triangles
-	pipelineBuilder.set_input_topology( VK_PRIMITIVE_TOPOLOGY_POINT_LIST );
-	// pipelineBuilder.set_input_topology( VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST );
-	//filled triangles
-	pipelineBuilder.set_polygon_mode( VK_POLYGON_MODE_FILL );
-	//no backface culling
-	pipelineBuilder.set_cull_mode( VK_CULL_MODE_NONE, VK_FRONT_FACE_CLOCKWISE );
-	//no multisampling
-	pipelineBuilder.set_multisampling_none();
-	// alpha blending
-	pipelineBuilder.enable_blending_alphablend();
-	// depth testing
-	pipelineBuilder.enable_depthtest( true, VK_COMPARE_OP_GREATER_OR_EQUAL );
-
-	//connect the image format we will draw into, from draw image
-	pipelineBuilder.set_color_attachment_format( drawImage.imageFormat );
-	pipelineBuilder.set_depth_format( depthImage.imageFormat );
-
-	//finally build the pipeline
-	meshPipeline = pipelineBuilder.build_pipeline( device );
-
-	//clean structures
-	vkDestroyShaderModule( device, meshFragShader, nullptr );
-	vkDestroyShaderModule( device, meshVertexShader, nullptr );
-
-	mainDeletionQueue.push_function( [ & ] ()  {
-		vkDestroyPipelineLayout( device, meshPipelineLayout, nullptr );
-		vkDestroyPipeline( device, meshPipeline, nullptr );
 	});
 }
 
@@ -771,92 +696,7 @@ void PrometheusInstance::destroyImage ( const AllocatedImage& img ) {
 	vmaDestroyImage( allocator, img.image, img.allocation );
 }
 
-GPUMeshBuffers PrometheusInstance::uploadMesh ( std::span<uint32_t> indices, std::span<Vertex> vertices ) {
-	const size_t vertexBufferSize = vertices.size() * sizeof( Vertex );
-	const size_t indexBufferSize = indices.size() * sizeof( uint32_t );
-
-	GPUMeshBuffers newSurface;
-
-	//create vertex buffer
-	newSurface.vertexBuffer = createBuffer( vertexBufferSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
-		VMA_MEMORY_USAGE_GPU_ONLY );
-
-	//find the adress of the vertex buffer
-	VkBufferDeviceAddressInfo deviceAdressInfo{
-		.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO,
-		.buffer = newSurface.vertexBuffer.buffer };
-	newSurface.vertexBufferAddress = vkGetBufferDeviceAddress( device, &deviceAdressInfo );
-
-	//create index buffer
-	newSurface.indexBuffer = createBuffer( indexBufferSize, VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-		VMA_MEMORY_USAGE_GPU_ONLY );
-
-	AllocatedBuffer staging = createBuffer( vertexBufferSize + indexBufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_MEMORY_USAGE_CPU_ONLY );
-
-	void* data = staging.allocation->GetMappedData();
-
-	// copy vertex buffer
-	memcpy( data, vertices.data(), vertexBufferSize );
-	// copy index buffer
-	memcpy( ( char* )data + vertexBufferSize, indices.data(), indexBufferSize );
-
-	immediateSubmit( [&] ( VkCommandBuffer cmd ) {
-		VkBufferCopy vertexCopy{ 0 };
-		vertexCopy.dstOffset = 0;
-		vertexCopy.srcOffset = 0;
-		vertexCopy.size = vertexBufferSize;
-
-		vkCmdCopyBuffer( cmd, staging.buffer, newSurface.vertexBuffer.buffer, 1, &vertexCopy );
-
-		VkBufferCopy indexCopy{ 0 };
-		indexCopy.dstOffset = 0;
-		indexCopy.srcOffset = vertexBufferSize;
-		indexCopy.size = indexBufferSize;
-
-		vkCmdCopyBuffer( cmd, staging.buffer, newSurface.indexBuffer.buffer, 1, &indexCopy );
-	});
-
-	// immediate submit completes
-	destroyBuffer( staging );
-
-	// buffer contents are populated
-	return newSurface;
-}
-
 void PrometheusInstance::initDefaultData () {
-
-// BASIC TEST MESH
-	testMeshes = loadGLTFMeshes( this,"..\\assets\\basicmesh.glb" ).value();
-
-	std::array<Vertex, 4> rect_vertices;
-
-	rect_vertices[ 0 ].position = {  0.5f,-0.5f, 0.0f };
-	rect_vertices[ 1 ].position = {  0.5f, 0.5f, 0.0f };
-	rect_vertices[ 2 ].position = { -0.5f,-0.5f, 0.0f };
-	rect_vertices[ 3 ].position = { -0.5f, 0.5f, 0.0f };
-
-	rect_vertices[ 0 ].color = { 0.0f, 0.0f, 0.0f, 1.0f };
-	rect_vertices[ 1 ].color = { 0.5f, 0.5f, 0.5f, 1.0f };
-	rect_vertices[ 2 ].color = { 1.0f, 0.0f, 0.0f, 1.0f };
-	rect_vertices[ 3 ].color = { 0.0f, 1.0f, 0.0f, 1.0f };
-
-	std::array<uint32_t, 6> rect_indices;
-
-	rect_indices[ 0 ] = 0;
-	rect_indices[ 1 ] = 1;
-	rect_indices[ 2 ] = 2;
-
-	rect_indices[ 3 ] = 2;
-	rect_indices[ 4 ] = 1;
-	rect_indices[ 5 ] = 3;
-
-	rectangle = uploadMesh( rect_indices, rect_vertices );
-
-	//delete the rectangle data on engine shutdown
-	mainDeletionQueue.push_function([&](){
-		destroyBuffer( rectangle.indexBuffer );
-		destroyBuffer( rectangle.vertexBuffer );
-	});
 
 // TEXTURES
 	// 3 default textures, white, grey, black. 1 pixel each
@@ -869,22 +709,11 @@ void PrometheusInstance::initDefaultData () {
 	uint32_t black = glm::packUnorm4x8(glm::vec4(0, 0, 0, 0 ) );
 	blackImage = createImage( ( void * ) &black, VkExtent3D{ 1, 1, 1 }, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_SAMPLED_BIT );
 
-	//checkerboard image
-	uint32_t magenta = glm::packUnorm4x8( glm::vec4( 1, 0, 1, 1 ) );
-	std::array< uint32_t, 16 * 16 > pixels; //for 16x16 checkerboard texture
-	for ( int x = 0; x < 16; x++ ) {
-		for ( int y = 0; y < 16; y++ ) {
-			pixels[ y * 16 + x ] = ( ( x % 2) ^ ( y % 2 ) ) ? magenta : black;
-		}
-	}
-	errorCheckerboardImage = createImage( pixels.data(), VkExtent3D{ 16, 16, 1 }, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_SAMPLED_BIT );
-
 // SAMPLER OBJECTS
 	VkSamplerCreateInfo sampl = { .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO };
 
 	sampl.magFilter = VK_FILTER_NEAREST;
 	sampl.minFilter = VK_FILTER_NEAREST;
-
 	vkCreateSampler( device, &sampl, nullptr, &defaultSamplerNearest );
 
 	sampl.magFilter = VK_FILTER_LINEAR;
@@ -898,33 +727,7 @@ void PrometheusInstance::initDefaultData () {
 		destroyImage( whiteImage );
 		destroyImage( greyImage );
 		destroyImage( blackImage );
-		destroyImage( errorCheckerboardImage );
 	});
-
-// basic GLTF rendering setup
-	GLTFMetallic_Roughness::MaterialResources materialResources;
-	//default the material textures
-	materialResources.colorImage = whiteImage;
-	materialResources.colorSampler = defaultSamplerLinear;
-	materialResources.metalRoughImage = whiteImage;
-	materialResources.metalRoughSampler = defaultSamplerLinear;
-
-	//set the uniform buffer for the material data
-	AllocatedBuffer materialConstants = createBuffer( sizeof( GLTFMetallic_Roughness::MaterialConstants ), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU );
-
-	//write the buffer
-	GLTFMetallic_Roughness::MaterialConstants* sceneUniformData = ( GLTFMetallic_Roughness::MaterialConstants * ) materialConstants.allocation->GetMappedData();
-	sceneUniformData->colorFactors = glm::vec4{ 1.0f, 1.0f, 1.0f, 1.0f };
-	sceneUniformData->metal_rough_factors = glm::vec4{ 1.0f,0.5f,0.0f,0.0f };
-
-	mainDeletionQueue.push_function( [ =, this ] () {
-		destroyBuffer( materialConstants );
-	});
-
-	materialResources.dataBuffer = materialConstants.buffer;
-	materialResources.dataBufferOffset = 0;
-
-	defaultData = metalRoughMaterial.writeMaterial( device, MaterialPass::MainColor, materialResources, globalDescriptorAllocator );
 }
 
 void PrometheusInstance::drawBackground ( VkCommandBuffer cmd ) const {
@@ -951,7 +754,7 @@ void PrometheusInstance::drawGeometry ( VkCommandBuffer cmd ) {
 	VkRenderingInfo renderInfo = vkinit::rendering_info( drawExtent, &colorAttachment, &depthAttachment );
 
 	//allocate a new uniform buffer for the scene data
-	AllocatedBuffer gpuSceneDataBuffer = createBuffer( sizeof( BasicGPUSceneData ), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU );
+	AllocatedBuffer gpuSceneDataBuffer = createBuffer( sizeof( GlobalData ), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU );
 
 	//add it to the deletion queue of this frame so it gets deleted once its been used
 	getCurrentFrame().deletionQueue.push_function( [ =, this ] () {
@@ -959,17 +762,17 @@ void PrometheusInstance::drawGeometry ( VkCommandBuffer cmd ) {
 	});
 
 	//write the buffer
-	BasicGPUSceneData* sceneUniformData = ( BasicGPUSceneData * ) gpuSceneDataBuffer.allocation->GetMappedData();
-	*sceneUniformData = sceneData;
+	GlobalData* globalUniformData = ( GlobalData * ) gpuSceneDataBuffer.allocation->GetMappedData();
+	*globalUniformData = globalData;
 
 	//create a descriptor set that binds that buffer and update it
-	VkDescriptorSet globalDescriptor = getCurrentFrame().frameDescriptors.allocate( device, gpuSceneDataDescriptorLayout);
+	VkDescriptorSet globalDescriptor = getCurrentFrame().frameDescriptors.allocate( device, gpuSceneDataDescriptorLayout );
 
 	DescriptorWriter writer;
-	writer.write_buffer( 0, gpuSceneDataBuffer.buffer, sizeof( BasicGPUSceneData ), 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER );
+	writer.write_buffer( 0, gpuSceneDataBuffer.buffer, sizeof( GlobalData ), 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER );
 	writer.update_set( device, globalDescriptor );
 
-	vkCmdBeginRendering( cmd, &renderInfo);
+	vkCmdBeginRendering( cmd, &renderInfo );
 	// vkCmdBindPipeline( cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, trianglePipeline );
 
 	//set dynamic viewport and scissor
@@ -989,138 +792,28 @@ void PrometheusInstance::drawGeometry ( VkCommandBuffer cmd ) {
 	scissor.extent.height = drawExtent.height;
 	vkCmdSetScissor( cmd, 0, 1, &scissor );
 
-	//launch a draw command to draw 3 vertices
+	// launch a draw command to draw 3 vertices -> number of agents
 	// vkCmdDraw( cmd, 3, 1, 0, 0 );
-
-	// now draw the "mesh"
-	vkCmdBindPipeline( cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, meshPipeline );
 
 	// dynamic descriptor allocation, to bind a texture
 	VkDescriptorSet imageSet = getCurrentFrame().frameDescriptors.allocate( device, singleImageDescriptorLayout );
 	{
 		DescriptorWriter writer;
-		writer.write_image( 0, errorCheckerboardImage.imageView, defaultSamplerLinear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER );
+		writer.write_image( 0, whiteImage.imageView, defaultSamplerLinear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER );
 		writer.update_set( device, imageSet );
 	}
 
-	vkCmdBindDescriptorSets( cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, meshPipelineLayout, 0, 1, &imageSet, 0, nullptr );
+	// vkCmdBindDescriptorSets( cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, meshPipelineLayout, 0, 1, &imageSet, 0, nullptr );
 
 	GPUDrawPushConstants push_constants;
 	push_constants.worldMatrix = glm::mat4{ 1.0f };
 	push_constants.tOffset = frameNumber;
-	push_constants.vertexBuffer = rectangle.vertexBufferAddress;
 
 	// vkCmdPushConstants( cmd, meshPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof( GPUDrawPushConstants ), &push_constants );
-	// vkCmdBindIndexBuffer( cmd, rectangle.indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32 );
-	// vkCmdDrawIndexed( cmd, 6, 1, 0, 0, 0 );
-
-	push_constants.vertexBuffer = testMeshes[ 2 ]->meshBuffers.vertexBufferAddress;
-
-	// view and camera projection
-	glm::mat4 view = glm::rotate( glm::translate( glm::vec3{ 0.0f,0.0f,-5.0f } ), frameNumber / 100.0f, glm::vec3( 0.0f, 1.0f, 0.0f ) );
-	glm::mat4 projection = glm::perspective( glm::radians( 30.0f ), ( float ) drawExtent.width / ( float ) drawExtent.height, 10000.f, 0.1f );
-
-	// invert the Y direction on projection matrix so that we are more similar to opengl and gltf axis
-	projection[ 1 ][ 1 ] *= -1.0f;
-
-	push_constants.worldMatrix = projection * view;
-	vkCmdPushConstants( cmd, meshPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof( GPUDrawPushConstants ), &push_constants );
-	vkCmdBindIndexBuffer( cmd, testMeshes[ 2 ]->meshBuffers.indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32 );
-
-	vkCmdDrawIndexed( cmd, testMeshes[ 2 ]->surfaces[ 0 ].count, 1, testMeshes[ 2 ]->surfaces[ 0 ].startIndex, 0, 0 );
 
 	vkCmdEndRendering( cmd );
 }
 
-void GLTFMetallic_Roughness::buildPipelines ( PrometheusInstance* engine ) {
-	VkShaderModule meshFragShader;
-	if ( !vkutil::load_shader_module( "../shaders/mesh.frag.spv", engine->device, &meshFragShader ) ) {
-		fmt::println( "Error when building the triangle fragment shader module" );
-	}
-
-	VkShaderModule meshVertexShader;
-	if ( !vkutil::load_shader_module( "../shaders/mesh.vert.spv", engine->device, &meshVertexShader ) ) {
-		fmt::println( "Error when building the triangle vertex shader module" );
-	}
-
-	VkPushConstantRange matrixRange{};
-	matrixRange.offset = 0;
-	matrixRange.size = sizeof( GPUDrawPushConstants );
-	matrixRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
-
-	DescriptorLayoutBuilder layoutBuilder;
-	layoutBuilder.add_binding( 0,VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER );
-	layoutBuilder.add_binding( 1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER );
-	layoutBuilder.add_binding( 2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER );
-
-	materialLayout = layoutBuilder.build( engine->device, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT );
-
-	VkDescriptorSetLayout layouts[] = { engine->gpuSceneDataDescriptorLayout, materialLayout };
-
-	VkPipelineLayoutCreateInfo mesh_layout_info = vkinit::pipeline_layout_create_info();
-	mesh_layout_info.setLayoutCount = 2;
-	mesh_layout_info.pSetLayouts = layouts;
-	mesh_layout_info.pPushConstantRanges = &matrixRange;
-	mesh_layout_info.pushConstantRangeCount = 1;
-
-	VkPipelineLayout newLayout;
-	VK_CHECK( vkCreatePipelineLayout( engine->device, &mesh_layout_info, nullptr, &newLayout ) );
-
-	opaquePipeline.layout = newLayout;
-	transparentPipeline.layout = newLayout;
-
-	// build the stage-create-info for both vertex and fragment stages. This lets
-	// the pipeline know the shader modules per stage
-	PipelineBuilder pipelineBuilder;
-	pipelineBuilder.set_shaders( meshVertexShader, meshFragShader );
-	pipelineBuilder.set_input_topology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST );
-	pipelineBuilder.set_polygon_mode( VK_POLYGON_MODE_FILL );
-	// pipelineBuilder.set_input_topology( VK_PRIMITIVE_TOPOLOGY_POINT_LIST );
-	// pipelineBuilder.set_polygon_mode( VK_POLYGON_MODE_FILL );
-	pipelineBuilder.set_cull_mode( VK_CULL_MODE_NONE, VK_FRONT_FACE_CLOCKWISE );
-	pipelineBuilder.set_multisampling_none();
-	pipelineBuilder.disable_blending();
-	pipelineBuilder.enable_depthtest( true, VK_COMPARE_OP_GREATER_OR_EQUAL );
-
-	//render format
-	pipelineBuilder.set_color_attachment_format( engine->drawImage.imageFormat );
-	pipelineBuilder.set_depth_format( engine->depthImage.imageFormat );
-
-	// use the triangle layout we created
-	pipelineBuilder._pipelineLayout = newLayout;
-
-	// finally build the pipeline
-	opaquePipeline.pipeline = pipelineBuilder.build_pipeline( engine->device );
-
-	// create the transparent variant
-	pipelineBuilder.enable_blending_additive();
-	pipelineBuilder.enable_depthtest( false, VK_COMPARE_OP_GREATER_OR_EQUAL );
-	transparentPipeline.pipeline = pipelineBuilder.build_pipeline( engine->device );
-
-	vkDestroyShaderModule( engine->device, meshFragShader, nullptr );
-	vkDestroyShaderModule( engine->device, meshVertexShader, nullptr );
-}
-
-MaterialInstance GLTFMetallic_Roughness::writeMaterial ( VkDevice device, MaterialPass pass, const MaterialResources& resources, DescriptorAllocatorGrowable& descriptorAllocator ) {
-	MaterialInstance matData;
-	matData.passType = pass;
-	if ( pass == MaterialPass::Transparent ) {
-		matData.pipeline = &transparentPipeline;
-	} else {
-		matData.pipeline = &opaquePipeline;
-	}
-
-	matData.materialSet = descriptorAllocator.allocate( device, materialLayout );
-
-	writer.clear();
-	writer.write_buffer( 0, resources.dataBuffer, sizeof( MaterialConstants ), resources.dataBufferOffset, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER );
-	writer.write_image( 1, resources.colorImage.imageView, resources.colorSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER );
-	writer.write_image( 2, resources.metalRoughImage.imageView, resources.metalRoughSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER );
-
-	writer.update_set( device, matData.materialSet );
-
-	return matData;
-}
 
 void PrometheusInstance::initImgui () {
 	// 1: create descriptor pool for IMGUI

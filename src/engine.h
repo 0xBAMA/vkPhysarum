@@ -50,13 +50,15 @@ struct ComputePushConstants {
 	glm::vec4 data4;
 };
 
-struct BasicGPUSceneData {
-	glm::mat4 view;
-	glm::mat4 proj;
-	glm::mat4 viewproj;
-	glm::vec4 ambientColor;
-	glm::vec4 sunlightDirection; // w for power
-	glm::vec4 sunlightColor;
+// common configuration across all shaders
+struct GlobalData {
+	glm::mat4 placeholder0;
+	glm::mat4 placeholder1;
+	glm::mat4 placeholder2;
+	glm::vec4 placeholder3;
+	glm::vec4 placeholder4;
+	glm::vec4 placeholder5;
+	glm::vec4 placeholder6;
 };
 
 struct ComputeEffect {
@@ -71,62 +73,22 @@ struct ComputeEffect {
 	ComputePushConstants data;
 };
 
-struct GLTFMetallic_Roughness {
-// material wrapper defined in vk_types
-	MaterialPipeline opaquePipeline;
-	MaterialPipeline transparentPipeline;
-
-	VkDescriptorSetLayout materialLayout;
-
-	struct MaterialConstants {
-		glm::vec4 colorFactors;
-		glm::vec4 metal_rough_factors;
-		//padding, we need it anyway for uniform buffers
-		glm::vec4 extra[ 14 ];
-	};
-
-	struct MaterialResources {
-		AllocatedImage colorImage;
-		VkSampler colorSampler;
-		AllocatedImage metalRoughImage;
-		VkSampler metalRoughSampler;
-		VkBuffer dataBuffer;
-		uint32_t dataBufferOffset;
-	};
-
-	DescriptorWriter writer;
-
-	void buildPipelines ( PrometheusInstance* engine );
-	void clearResources ( VkDevice device );
-
-	MaterialInstance writeMaterial ( VkDevice device, MaterialPass pass, const MaterialResources& resources, DescriptorAllocatorGrowable& descriptorAllocator );
-};
-
-struct RenderObject {
-	uint32_t indexCount;
-	uint32_t firstIndex;
-	VkBuffer indexBuffer;
-
-	MaterialInstance* material;
-
-	glm::mat4 transform;
-	VkDeviceAddress vertexBufferAddress;
-};
-
-struct DrawContext {
-	std::vector< RenderObject > OpaqueSurfaces;
-};
-
-struct MeshNode : public Node {
-	std::shared_ptr< MeshAsset > mesh;
-	virtual void Draw ( const glm::mat4& topMatrix, DrawContext& ctx ) override;
-};
-
 constexpr unsigned int FRAME_OVERLAP = 2;
 constexpr bool useValidationLayers = true;
 
 class PrometheusInstance {
 public:
+
+// physarum data/storage resources
+	AllocatedBuffer simAgentBuffer;
+	AllocatedImage FloatBufferA;
+	AllocatedImage FloatBufferB;
+
+// pipelines for physarum
+	// agent update
+	// agent raster
+	// buffer blur
+	// buffer raster
 
 	bool resizeRequest { false };
 	bool isInitialized { false };
@@ -137,18 +99,7 @@ public:
 	VkPipelineLayout trianglePipelineLayout;
 	VkPipeline trianglePipeline;
 
-	// for drawing a mesh
-	VkPipelineLayout meshPipelineLayout;
-	VkPipeline meshPipeline;
-	GPUMeshBuffers rectangle;
 	void initDefaultData ();
-	GPUMeshBuffers uploadMesh ( std::span<uint32_t> indices, std::span<Vertex> vertices );
-	std::vector<std::shared_ptr<MeshAsset>> testMeshes;
-
-	// GLTF mesh drawing
-	MaterialInstance defaultData;
-	GLTFMetallic_Roughness metalRoughMaterial;
-
 	// for buffer setup
 	AllocatedBuffer createBuffer( size_t allocSize, VkBufferUsageFlags usage, VmaMemoryUsage memoryUsage );
 	void destroyBuffer( const AllocatedBuffer& buffer );
@@ -178,7 +129,6 @@ public:
 	AllocatedImage whiteImage;
 	AllocatedImage blackImage;
 	AllocatedImage greyImage;
-	AllocatedImage errorCheckerboardImage;
 
 	// and default sampler types
 	VkSampler defaultSamplerLinear;
@@ -193,7 +143,7 @@ public:
 	VkCommandPool immediateCommandPool;
 	void immediateSubmit( std::function< void( VkCommandBuffer cmd ) > && function );
 
-	BasicGPUSceneData sceneData;
+	GlobalData globalData;
 	DescriptorAllocatorGrowable globalDescriptorAllocator;
 	VkDescriptorSetLayout gpuSceneDataDescriptorLayout;
 
@@ -239,10 +189,13 @@ private:
 	void initSyncStructures ();
 	void initDescriptors ();
 	void initPipelines ();
-	void initBackgroundPipelines ();
-	void initTrianglePipeline ();
-	void initMeshPipeline ();
 	void initImgui ();
+
+	// specific pipelines:
+	void initAgentUpdatePipeline ();
+	void initAgentRasterPipeline ();
+	void initBufferBlurPipeline ();
+	void initBufferPresentPipeline ();
 
 	// main loop helpers
 	void drawImgui ( VkCommandBuffer cmd, VkImageView targetImageView );
