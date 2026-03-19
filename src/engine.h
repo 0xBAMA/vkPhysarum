@@ -43,13 +43,6 @@ struct frameData_t {
 	DescriptorAllocatorGrowable frameDescriptors;
 };
 
-struct ComputePushConstants {
-	glm::vec4 data1;
-	glm::vec4 data2;
-	glm::vec4 data3;
-	glm::vec4 data4;
-};
-
 // common configuration across all shaders
 struct GlobalData {
 	glm::mat4 placeholder0;
@@ -61,51 +54,73 @@ struct GlobalData {
 	glm::vec4 placeholder6;
 };
 
-struct ComputeEffect {
-	const char* name;
-
-	VkPipeline pipeline;
-	VkPipelineLayout layout;
-
-	// need to figure out adding buffers + textures here
-		// this is core functionality, with configurable descriptors for the particular effects
-
-	ComputePushConstants data;
+struct PushConstants {
+	glm::uvec2 floatBufferResolution;
+	glm::uvec2 presentBufferResolution;
+	uint32_t wangSeed;
+	uint32_t operation;
 };
 
 constexpr unsigned int FRAME_OVERLAP = 2;
 constexpr bool useValidationLayers = true;
 
+// then the SSBO for the agents
+struct Agent {
+	float mass;
+	float pad;
+	float drag;
+	float senseDistance;
+	float senseAngle;
+	float turnAngle;
+	float forceAmount; // replaces stepsize
+	float depositAmount;
+	glm::vec2 position;
+	glm::vec2 velocity;
+};
+
 class PrometheusInstance {
 public:
 
 // physarum data/storage resources
+	uint32_t numAgents = 10000;
 	AllocatedBuffer simAgentBuffer;
+
+	glm::uvec2 FloatBufferResolution{ 1024, 512 };
 	AllocatedImage FloatBufferA;
 	AllocatedImage FloatBufferB;
 
+// descriptor set layout for these resources:
+	VkDescriptorSetLayout physarumGlobalDescriptorSetLayout;
+	VkDescriptorSet physarumGlobalDescriptorSet;
+
+// the stuff defining the push constants:
+	PushConstants physarumGlobalPushConstant;
+
+// and the pipeline layout which contains the information for the descriptors + push constants
+	VkPipelineLayout physarumGlobalPipelineLayout;
+
 // pipelines for physarum
 	// agent update
+	VkPipeline agentUpdatePipeline;
+
 	// agent raster
+	VkPipeline agentRasterPipeline;
+
 	// buffer blur
+	VkPipeline bufferBlurPipeline;
+
 	// buffer raster
+	VkPipeline bufferPresentPipeline;
 
 	bool resizeRequest { false };
 	bool isInitialized { false };
 	bool stopRendering { false };
 	int frameNumber { 0 };
 
-	// for drawing a triangle
-	VkPipelineLayout trianglePipelineLayout;
-	VkPipeline trianglePipeline;
-
 	void initDefaultData ();
 	// for buffer setup
 	AllocatedBuffer createBuffer( size_t allocSize, VkBufferUsageFlags usage, VmaMemoryUsage memoryUsage );
 	void destroyBuffer( const AllocatedBuffer& buffer );
-
-	// also contains retained state for push constants
-	std::vector< ComputeEffect > computeEffects;
 
 	// basic Vulkan necessities, environmental handles
 	VkInstance instance;						// Vulkan library handle
@@ -150,8 +165,6 @@ public:
 	VkDescriptorSet drawImageDescriptors;
 	VkDescriptorSetLayout drawImageDescriptorLayout;
 
-	VkDescriptorSetLayout singleImageDescriptorLayout;
-
 	// the queue that we submit work to
 	VkQueue graphicsQueue;
 	uint32_t graphicsQueueFamilyIndex;
@@ -190,17 +203,11 @@ private:
 	void initDescriptors ();
 	void initPipelines ();
 	void initImgui ();
-
-	// specific pipelines:
-	void initAgentUpdatePipeline ();
-	void initAgentRasterPipeline ();
-	void initBufferBlurPipeline ();
-	void initBufferPresentPipeline ();
+	void initResources ();
 
 	// main loop helpers
 	void drawImgui ( VkCommandBuffer cmd, VkImageView targetImageView );
 	void drawGeometry ( VkCommandBuffer cmd );
-	void drawBackground ( VkCommandBuffer cmd ) const;
 
 	// swapchain helpers
 	void resizeSwapchain ();

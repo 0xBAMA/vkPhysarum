@@ -37,29 +37,13 @@ struct AllocatedBuffer {
 	VmaAllocationInfo info;
 };
 
-struct GPUGLTFMaterial {
-	glm::vec4 colorFactors;
-	glm::vec4 metal_rough_factors;
-	glm::vec4 extra[ 14 ];
-};
-
-static_assert(sizeof(GPUGLTFMaterial) == 256);
-
-struct GPUSceneData {
-	glm::mat4 view;
-	glm::mat4 proj;
-	glm::mat4 viewproj;
-	glm::vec4 ambientColor;
-	glm::vec4 sunlightDirection; // w for sun power
-	glm::vec4 sunlightColor;
-};
-
 //> vbuf_types
 // push constants for our mesh object draws
 struct GPUDrawPushConstants {
-	glm::mat4 worldMatrix;
-	float tOffset;
-	// VkDeviceAddress vertexBuffer;
+	glm::ivec2 floatBufferResolution;
+	glm::ivec2 presentBufferResolution;
+	uint32_t wangSeed;
+	uint32_t operation;
 };
 //< vbuf_types
 

@@ -47,6 +47,7 @@ void PrometheusInstance::Init () {
 	initSwapchain();
 	initCommandStructures();
 	initSyncStructures();
+	initResources();
 	initDescriptors();
 	initPipelines();
 	initImgui();
@@ -94,12 +95,17 @@ void PrometheusInstance::Draw () {
 	// start the command buffer recording
 	VK_CHECK( vkBeginCommandBuffer( cmd, &cmdBeginInfo ) );
 
-	// put the draw image in a general layout
-	vkutil::transition_image( cmd, drawImage.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL );
+// The Whole Operation:
+	// 1. Update the agents, which read from Float Buffer A
+	// 2. Barrier to make sure the GPU finishes updating the agents
+	// 3. Rasterize the agent positions into Float Buffer A
+	// 4. Barrier to make sure the GPU finishes updating Float Buffer A
+	// 5. Compute a horizontal blur into Float Buffer B
+	// 6. Barrier to make sure the GPU finishes updating Float Buffer B
+	// 7. Compute a vertical blur back into Float buffer A
 
-	drawBackground( cmd );
-
-	vkutil::transition_image( cmd, drawImage.image, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL );
+	// put the draw image in a color attachment mode
+	vkutil::transition_image( cmd, drawImage.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL );
 	vkutil::transition_image( cmd, depthImage.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL );
 
 	drawGeometry( cmd );
@@ -197,17 +203,17 @@ void PrometheusInstance::MainLoop () {
 			ImGui_ImplSDL2_NewFrame();
 			ImGui::NewFrame();
 
-			//some imgui UI to test
-			// ImGui::ShowDemoWindow();
+			// some imgui UI to test
+			ImGui::ShowDemoWindow();
 
 			if ( ImGui::Begin( "Edit" ) ) {
 				ImGui::SliderFloat( "Render Scale", &renderScale, 0.3f, 1.0f );
-				ImGui::ColorPicker3( "Color 1", ( float * ) &computeEffects[ 0 ].data.data1[ 0 ] );
-				ImGui::ColorPicker3( "Color 2", ( float * ) &computeEffects[ 0 ].data.data2[ 0 ] );
+				// ImGui::ColorPicker3( "Color 1", ( float * ) &computeEffects[ 0 ].data.data1[ 0 ] );
+				// ImGui::ColorPicker3( "Color 2", ( float * ) &computeEffects[ 0 ].data.data2[ 0 ] );
 			}
 			ImGui::End();
 
-			//make imgui calculate internal draw structures
+			// make imgui calculate internal draw structures
 			ImGui::Render();
 
 			// we're ready to draw the next frame
@@ -401,6 +407,8 @@ void PrometheusInstance::initSyncStructures () {
 
 	VK_CHECK( vkCreateFence( device, &fenceCreateInfo, nullptr, &immediateFence ) );
 	mainDeletionQueue.push_function( [ = ] ()  { vkDestroyFence( device, immediateFence, nullptr ); } );
+
+	// will also need several barriers for the compute/graphics operations
 }
 
 void PrometheusInstance::initDescriptors  () {
@@ -424,12 +432,6 @@ void PrometheusInstance::initDescriptors  () {
 		DescriptorLayoutBuilder builder;
 		builder.add_binding( 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER );
 		gpuSceneDataDescriptorLayout = builder.build( device, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT );
-	}
-
-	{
-		DescriptorLayoutBuilder builder;
-		builder.add_binding( 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER );
-		singleImageDescriptorLayout = builder.build( device, VK_SHADER_STAGE_FRAGMENT_BIT );
 	}
 
 	drawImageDescriptors = globalDescriptorAllocator.allocate( device, drawImageDescriptorLayout );
@@ -472,107 +474,102 @@ void PrometheusInstance::initDescriptors  () {
 			frameData[ i ].frameDescriptors.destroy_pools( device );
 		});
 	}
+
+// adding the descriptor stuff for the global descriptor set...
+// first need to create the descriptor set layout, then the descriptor set...
+
+
+
+// then use the DescriptorWriter to write it
+	// DescriptorWriter writer;
+	// writer.write_buffer( 0, gpuSceneDataBuffer.buffer, sizeof( BasicGPUSceneData ), 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER );
+	// writer.update_set( device, globalDescriptor );
+}
+
+void PrometheusInstance::initResources () {
+// API resource allocation:
+	// create the buffer for the agents
+	simAgentBuffer = createBuffer( numAgents * sizeof( Agent ), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_GPU_ONLY );
+
+	// create the two Float Buffer images ( A + B )
+	VkExtent3D bufferExtent = { FloatBufferResolution.y, FloatBufferResolution.y, 1 };
+	FloatBufferA = createImage( bufferExtent, VK_FORMAT_R32_SFLOAT, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT );
+	FloatBufferB = createImage( bufferExtent, VK_FORMAT_R32_SFLOAT, VK_IMAGE_USAGE_STORAGE_BIT );
 }
 
 void PrometheusInstance::initPipelines () {
-	// graphics pipelines
-	initBufferPresentPipeline();
-}
 
-void PrometheusInstance::initBackgroundPipelines () {
-	VkPipelineLayoutCreateInfo computeLayout{};
-	computeLayout.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-	computeLayout.pNext = nullptr;
-	computeLayout.pSetLayouts = &drawImageDescriptorLayout;
-	computeLayout.setLayoutCount = 1;
+// we actually share a lot of the init across each one of these...
 
-	VkPushConstantRange pushConstant{};
-	pushConstant.offset = 0;
-	pushConstant.size = sizeof( ComputePushConstants ) ;
-	pushConstant.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+	// configuration for the push constants
 
-	computeLayout.pPushConstantRanges = &pushConstant;
-	computeLayout.pushConstantRangeCount = 1;
+	// configuration for the descriptor set
 
-	ComputeEffect gradient;
-	VK_CHECK( vkCreatePipelineLayout( device, &computeLayout, nullptr, &gradient.layout ) );
+	// the actual pipeline layout itself
 
-	VkShaderModule computeDrawShader;
-	if ( !vkutil::load_shader_module("../shaders/gradient.comp.spv", device, &computeDrawShader ) ) {
-		fmt::print( "Error when building the compute shader\n" );
-	}
 
-	VkPipelineShaderStageCreateInfo stageinfo{};
-	stageinfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-	stageinfo.pNext = nullptr;
-	stageinfo.stage = VK_SHADER_STAGE_COMPUTE_BIT;
-	stageinfo.module = computeDrawShader;
-	stageinfo.pName = "main";
+// then there are 4 separate pipelines that need to be created
 
-	VkComputePipelineCreateInfo computePipelineCreateInfo{};
-	computePipelineCreateInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
-	computePipelineCreateInfo.pNext = nullptr;
-	computePipelineCreateInfo.layout = gradient.layout;
-	computePipelineCreateInfo.stage = stageinfo;
+	// initAgentUpdatePipeline();		// compute
 
-	gradient.layout = gradient.layout;
-	gradient.name = "gradient";
-	gradient.data = {};
+	// initAgentRasterPipeline();		// raster
 
-	// default colors
-	gradient.data.data1 = glm::vec4( 1.0f, 0.0f, 0.0f, 1.0f );
-	gradient.data.data2 = glm::vec4( 0.0f, 0.0f, 1.0f, 1.0f );
+	// initBufferBlurPipeline();		// compute
 
-	// create the pipeline
-	VK_CHECK( vkCreateComputePipelines( device, VK_NULL_HANDLE, 1, &computePipelineCreateInfo, nullptr, &gradient.pipeline ) );
-	vkDestroyShaderModule( device, computeDrawShader, nullptr );
+	// initBufferPresentPipeline();		// raster
 
-	// add it to the list:
-	computeEffects.push_back( gradient );
-
-	// deletors for the pipeline layout + pipeline
-	mainDeletionQueue.push_function( [ & ] () {
-		vkDestroyPipelineLayout( device, gradient.layout, nullptr );
-		vkDestroyPipeline( device, gradient.pipeline, nullptr );
-	});
-}
-
-void PrometheusInstance::initAgentUpdatePipeline () {
 
 }
 
-void PrometheusInstance::initAgentRasterPipeline () {
+// VkPushConstantRange GlobalDataUBO{};
+// GlobalDataUBO.offset = 0;
+// GlobalDataUBO.size = sizeof( GlobalData );
+// GlobalDataUBO.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
+//
+// DescriptorLayoutBuilder layoutBuilder;
+// layoutBuilder.add_binding( 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER );
+// layoutBuilder.add_binding( 1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE );
+// layoutBuilder.add_binding( 2, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE );
+//
+// materialLayout = layoutBuilder.build( device, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT );
+//
+// VkDescriptorSetLayout layouts[] = { GlobalDataUBO, AgentBufferSSBO, ContinuumTextures };
+//
+// VkPipelineLayoutCreateInfo pipeline_layout_info = vkinit::pipeline_layout_create_info();
+// pipeline_layout_info.setLayoutCount = 3;
+// pipeline_layout_info.pSetLayouts = layouts;
+// pipeline_layout_info.pPushConstantRanges = &GlobalDataPushConstants;
+// pipeline_layout_info.pushConstantRangeCount = 1;
+// VK_CHECK( vkCreatePipelineLayout( device, &pipeline_layout_info, nullptr, &bufferPresentPipelineLayout ) );
 
-}
-
-void PrometheusInstance::initBufferBlurPipeline () {
-
-}
-
+/*
 void PrometheusInstance::initBufferPresentPipeline () {
 	VkShaderModule bufferPresentFragShader;
-	if ( !vkutil::load_shader_module( "../shaders/bufferPresentFS.spv", device, &bufferPresentFragShader ) ) {
+	if ( !vkutil::load_shader_module( "../shaders/bufferPresent.frag.glsl.spv", device, &bufferPresentFragShader ) ) {
 		fmt::print( "Error when building the buffer present fragment shader module\n" );
 	} else {
 		fmt::print( "Buffer present fragment shader successfully loaded\n" );
 	}
 
 	VkShaderModule bufferPresentVertexShader;
-	if ( !vkutil::load_shader_module( "../shaders/bufferPresentVS.spv", device, &bufferPresentVertexShader ) ) {
+	if ( !vkutil::load_shader_module( "../shaders/bufferPresent.vert.glsl.spv", device, &bufferPresentVertexShader ) ) {
 		fmt::print( "Error when building the buffer present vertex shader module\n" );
 	} else {
 		fmt::print( "Buffer present vertex shader successfully loaded\n" );
 	}
 
-	//build the pipeline layout that controls the inputs/outputs of the shader
-	//we are not using descriptor sets or other systems yet, so no need to use anything other than empty default
-	VkPipelineLayoutCreateInfo pipeline_layout_info = vkinit::pipeline_layout_create_info();
-	VK_CHECK( vkCreatePipelineLayout( device, &pipeline_layout_info, nullptr, &trianglePipelineLayout ) );
+// two pieces are needed (for all these):
+	// push constant config needs to happen
 
+	// descriptor set 0, binding 0 is the UBO for global data
+	// descriptor set 0, binding 1 is the SSBO for agent data
+	// descriptor set 0, binding 2 is the texture interface for Float Buffer A
+	// descriptor set 0, binding 3 is the image interface for Float Buffer A
+	// descriptor set 0, binding 4 is the image interface for Float Buffer B
+
+	// building the pipeline for a fullscreen triangle
 	PipelineBuilder pipelineBuilder;
-
-	//use the triangle layout we created
-	pipelineBuilder._pipelineLayout = trianglePipelineLayout;
+	pipelineBuilder._pipelineLayout = bufferPresentPipelineLayout;
 	pipelineBuilder.set_shaders( bufferPresentVertexShader, bufferPresentFragShader );
 	pipelineBuilder.set_input_topology( VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST );
 	pipelineBuilder.set_polygon_mode( VK_POLYGON_MODE_FILL );
@@ -580,23 +577,19 @@ void PrometheusInstance::initBufferPresentPipeline () {
 	pipelineBuilder.set_multisampling_none();
 	pipelineBuilder.disable_blending();
 	pipelineBuilder.disable_depthtest();
-
-	//connect the image format we will draw into, from draw image
 	pipelineBuilder.set_color_attachment_format( drawImage.imageFormat );
 	pipelineBuilder.set_depth_format( depthImage.imageFormat );
+	bufferPresentPipeline = pipelineBuilder.build_pipeline( device );
 
-	//finally build the pipeline
-	trianglePipeline = pipelineBuilder.build_pipeline( device );
-
-	//clean structures
 	vkDestroyShaderModule( device, bufferPresentFragShader, nullptr );
 	vkDestroyShaderModule( device, bufferPresentVertexShader, nullptr );
 
 	mainDeletionQueue.push_function( [ & ] ()  {
-		vkDestroyPipelineLayout( device, trianglePipelineLayout, nullptr );
-		vkDestroyPipeline( device, trianglePipeline, nullptr );
+		vkDestroyPipelineLayout( device, bufferPresentPipelineLayout, nullptr );
+		vkDestroyPipeline( device, bufferPresentPipeline, nullptr );
 	});
 }
+*/
 
 AllocatedBuffer PrometheusInstance::createBuffer ( size_t allocSize, VkBufferUsageFlags usage, VmaMemoryUsage memoryUsage ) {
 	// allocate buffer
@@ -697,7 +690,6 @@ void PrometheusInstance::destroyImage ( const AllocatedImage& img ) {
 }
 
 void PrometheusInstance::initDefaultData () {
-
 // TEXTURES
 	// 3 default textures, white, grey, black. 1 pixel each
 	uint32_t white = glm::packUnorm4x8( glm::vec4( 1.0f, 1.0f, 1.0f, 1.0f ) );
@@ -730,23 +722,6 @@ void PrometheusInstance::initDefaultData () {
 	});
 }
 
-void PrometheusInstance::drawBackground ( VkCommandBuffer cmd ) const {
-	// the gradient draw compute effect
-	const ComputeEffect& effect = computeEffects[ 0 ];
-
-	// bind the gradient drawing compute pipeline
-	vkCmdBindPipeline( cmd, VK_PIPELINE_BIND_POINT_COMPUTE, effect.pipeline );
-
-	// bind the descriptor set containing the draw image for the compute pipeline
-	vkCmdBindDescriptorSets( cmd, VK_PIPELINE_BIND_POINT_COMPUTE,  effect.layout, 0, 1, &drawImageDescriptors, 0, nullptr );
-
-	// pushing the new values of the push constants (mirrors uniform usage)
-	vkCmdPushConstants( cmd, effect.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof( ComputePushConstants ), &effect.data );
-
-	// execute the compute pipeline dispatch. We are using 16x16 workgroup size so we need to divide by it
-	vkCmdDispatch( cmd, std::ceil( drawExtent.width / 16.0f ), std::ceil( drawExtent.height / 16.0f ), 1 );
-}
-
 void PrometheusInstance::drawGeometry ( VkCommandBuffer cmd ) {
 	//begin a render pass  connected to our draw image
 	VkRenderingAttachmentInfo colorAttachment = vkinit::attachment_info( drawImage.imageView, nullptr, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL );
@@ -765,7 +740,7 @@ void PrometheusInstance::drawGeometry ( VkCommandBuffer cmd ) {
 	GlobalData* globalUniformData = ( GlobalData * ) gpuSceneDataBuffer.allocation->GetMappedData();
 	*globalUniformData = globalData;
 
-	//create a descriptor set that binds that buffer and update it
+	// create a descriptor set that binds that buffer and update it
 	VkDescriptorSet globalDescriptor = getCurrentFrame().frameDescriptors.allocate( device, gpuSceneDataDescriptorLayout );
 
 	DescriptorWriter writer;
@@ -795,25 +770,14 @@ void PrometheusInstance::drawGeometry ( VkCommandBuffer cmd ) {
 	// launch a draw command to draw 3 vertices -> number of agents
 	// vkCmdDraw( cmd, 3, 1, 0, 0 );
 
-	// dynamic descriptor allocation, to bind a texture
-	VkDescriptorSet imageSet = getCurrentFrame().frameDescriptors.allocate( device, singleImageDescriptorLayout );
-	{
-		DescriptorWriter writer;
-		writer.write_image( 0, whiteImage.imageView, defaultSamplerLinear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER );
-		writer.update_set( device, imageSet );
-	}
-
-	// vkCmdBindDescriptorSets( cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, meshPipelineLayout, 0, 1, &imageSet, 0, nullptr );
-
-	GPUDrawPushConstants push_constants;
-	push_constants.worldMatrix = glm::mat4{ 1.0f };
-	push_constants.tOffset = frameNumber;
+	// GPUDrawPushConstants push_constants;
+	// push_constants.floatBufferResolution = FloatBufferResolution;
+	// push_constants.presentBufferResolution = glm::vec2( drawExtent.width, drawExtent.height );
 
 	// vkCmdPushConstants( cmd, meshPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof( GPUDrawPushConstants ), &push_constants );
 
 	vkCmdEndRendering( cmd );
 }
-
 
 void PrometheusInstance::initImgui () {
 	// 1: create descriptor pool for IMGUI
@@ -864,7 +828,6 @@ void PrometheusInstance::initImgui () {
 	init_info.PipelineRenderingCreateInfo.colorAttachmentCount = 1;
 	init_info.PipelineRenderingCreateInfo.pColorAttachmentFormats = &swapchainImageFormat;
 
-
 	init_info.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
 
 	ImGui_ImplVulkan_Init( &init_info );
@@ -877,9 +840,9 @@ void PrometheusInstance::initImgui () {
 	});
 }
 
-//===========================================================================================================================
+//==============================================================================================
 // swapchain helpers
-//===========================================================================================================================
+//==============================================================================================
 void PrometheusInstance::resizeSwapchain () {
 	// wait till the device shows as idle
 	vkDeviceWaitIdle( device );
