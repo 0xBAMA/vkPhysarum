@@ -1,13 +1,20 @@
 // trying this out - keeping a common set of descriptors across all shaders
-
-//push constants block
+//=========================================================
+// push constants block
 layout( push_constant ) uniform constants {
-	mat4 render_matrix;
-	float tOffset;
-	// VertexBuffer ;
-} PushConstants;
+// buffer resolutions:
+	uvec2 floatBufferResolution;
+	uvec2 presentBufferResolution;
 
-// first global config etc data
+// RNG seeding
+	uint wangSeed;
+
+// specifying specific operations to be performed
+	// e.g. if I want to randomly seed the agent positions
+	uint operation;
+} PushConstants;
+//=========================================================
+// Global config etc data in a UBO
 layout( set = 0, binding = 0 ) uniform GlobalData {
 	mat4 placeholder0;
 	mat4 placeholder1;
@@ -17,7 +24,7 @@ layout( set = 0, binding = 0 ) uniform GlobalData {
 	vec4 placeholder5;
 	vec4 placeholder6;
 } globalData;
-
+//=========================================================
 // then the SSBO for the agents
 struct Agent {
 	float mass;
@@ -31,11 +38,19 @@ struct Agent {
 	vec2 position;
 	vec2 velocity;
 };
-
-layout ( buffer_reference, std430 ) buffer AgentBuffer {
+//=========================================================
+layout ( set = 0, binding = 1, std430 ) buffer AgentBuffer {
 	Agent agents[];
 };
-
-// then is the two float buffers...
-	// eventually I'd like to go to a sampler array and get this fully bindless
-
+//=========================================================
+// then is the two float image buffers...
+	// eventually I'd like to go to a sampler array and get this fully bindless...
+//=========================================================
+// I need:
+// linear filtered access to Float Buffer A
+layout ( set = 0, binding = 2 ) uniform sampler2D FloatBufferA_tex;
+// image load/store access to Float Buffer A
+layout ( r32f, set = 0, binding = 3 ) uniform image2D FloatBufferA_img;
+// image load/store access to Float Buffer B
+layout ( r32f, set = 0, binding = 4 ) uniform image2D FloatBufferB_img;
+//=========================================================
