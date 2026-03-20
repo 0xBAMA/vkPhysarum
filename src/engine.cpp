@@ -93,9 +93,14 @@ void PrometheusInstance::Draw () {
 	drawExtent.width = uint32_t( std::min( swapchainExtent.width, drawImage.imageExtent.width ) * renderScale );
 
 	// update the UBO
-	globalData.placeholder6.x = float( frameNumber );
+	// globalData.placeholder6.x = float( frameNumber );
 	GlobalData* uniformData = ( GlobalData * ) physarumGlobalUBO.allocation->GetMappedData();
 	*uniformData = globalData;
+
+	// updating the push constants, as needed:
+	// physarumGlobalPushConstant.wangSeed =
+	physarumGlobalPushConstant.floatBufferResolution = FloatBufferResolution;
+	physarumGlobalPushConstant.presentBufferResolution = glm::uvec2( drawExtent.width, drawExtent.height );
 
 	// start the command buffer recording
 	VK_CHECK( vkBeginCommandBuffer( cmd, &cmdBeginInfo ) );
@@ -559,6 +564,10 @@ void PrometheusInstance::initPipelines () {
 	pushConstants.stageFlags = shaderStages;
 	pipelineLayout.pPushConstantRanges = &pushConstants;
 	pipelineLayout.pushConstantRangeCount = 1;
+
+	// and some default contents for the push constants
+	physarumGlobalPushConstant.floatBufferResolution = FloatBufferResolution;
+	physarumGlobalPushConstant.presentBufferResolution = glm::uvec2( drawExtent.width, drawExtent.height );
 
 	{ // configure descriptor set layout -> descriptor set allocation
 		DescriptorLayoutBuilder builder;
