@@ -92,6 +92,11 @@ void PrometheusInstance::Draw () {
 	drawExtent.height = uint32_t( std::min( swapchainExtent.height, drawImage.imageExtent.height ) * renderScale );
 	drawExtent.width = uint32_t( std::min( swapchainExtent.width, drawImage.imageExtent.width ) * renderScale );
 
+	// update the UBO
+	globalData.placeholder6.x = float( frameNumber );
+	GlobalData* uniformData = ( GlobalData * ) physarumGlobalUBO.allocation->GetMappedData();
+	*uniformData = globalData;
+
 	// start the command buffer recording
 	VK_CHECK( vkBeginCommandBuffer( cmd, &cmdBeginInfo ) );
 
@@ -108,7 +113,8 @@ void PrometheusInstance::Draw () {
 	vkutil::transition_image( cmd, drawImage.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL );
 	vkutil::transition_image( cmd, depthImage.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL );
 
-	drawGeometry( cmd );
+	// drawing the contents of Float Buffer A onto the screen (with some configuration)
+	physarumFullscreenTriangle( cmd );
 
 	// transition the images for the copy
 	vkutil::transition_image( cmd, drawImage.image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL );
@@ -472,6 +478,10 @@ void PrometheusInstance::initDescriptors  () {
 
 void PrometheusInstance::initResources () {
 // API resource allocation:
+
+	// create the buffer for the UBO
+	physarumGlobalUBO = createBuffer( sizeof( GlobalData ), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU );
+
 	// create the buffer for the agents
 	simAgentBuffer = createBuffer( numAgents * sizeof( Agent ), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_GPU_ONLY );
 
@@ -482,6 +492,7 @@ void PrometheusInstance::initResources () {
 
 	// make sure to clean up at the end
 	mainDeletionQueue.push_function([ & ] () {
+		destroyBuffer( physarumGlobalUBO );
 		destroyBuffer( simAgentBuffer );
 		destroyImage( FloatBufferA );
 		destroyImage( FloatBufferB );
@@ -653,9 +664,9 @@ void PrometheusInstance::initPipelines () {
 		pipelineBuilder.set_polygon_mode( VK_POLYGON_MODE_FILL );
 		pipelineBuilder.set_cull_mode( VK_CULL_MODE_NONE, VK_FRONT_FACE_CLOCKWISE );
 		pipelineBuilder.set_multisampling_none();
-		pipelineBuilder.enable_blending_additive();
-		pipelineBuilder.disable_depthtest();
-		pipelineBuilder.set_color_attachment_format( FloatBufferA.imageFormat );
+		pipelineBuilder.disable_blending();
+		pipelineBuilder.set_color_attachment_format( drawImage.imageFormat );
+		pipelineBuilder.set_depth_format( depthImage.imageFormat );
 		bufferPresentPipeline = pipelineBuilder.build_pipeline( device );
 
 		// cleanup
@@ -799,14 +810,14 @@ void PrometheusInstance::initDefaultData () {
 	});
 }
 
-void PrometheusInstance::drawGeometry ( VkCommandBuffer cmd ) {
+void PrometheusInstance::physarumFullscreenTriangle ( VkCommandBuffer cmd ) {
 	//begin a render pass  connected to our draw image
 	VkRenderingAttachmentInfo colorAttachment = vkinit::attachment_info( drawImage.imageView, nullptr, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL );
 	VkRenderingAttachmentInfo depthAttachment = vkinit::depth_attachment_info( depthImage.imageView, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL );
 	VkRenderingInfo renderInfo = vkinit::rendering_info( drawExtent, &colorAttachment, &depthAttachment );
 
 	vkCmdBeginRendering( cmd, &renderInfo );
-	// vkCmdBindPipeline( cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, trianglePipeline );
+	vkCmdBindPipeline( cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, bufferPresentPipeline );
 
 	//set dynamic viewport and scissor
 	VkViewport viewport = {};
@@ -825,15 +836,11 @@ void PrometheusInstance::drawGeometry ( VkCommandBuffer cmd ) {
 	scissor.extent.height = drawExtent.height;
 	vkCmdSetScissor( cmd, 0, 1, &scissor );
 
-	// launch a draw command to draw 3 vertices -> number of agents
-	// vkCmdDraw( cmd, 3, 1, 0, 0 );
+	vkCmdBindDescriptorSets( cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,  physarumGlobalPipelineLayout, 0, 1, &physarumGlobalDescriptorSet, 0, nullptr );
+	vkCmdPushConstants( cmd, physarumGlobalPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof( PushConstants ), &physarumGlobalPushConstant );
 
-	// GPUDrawPushConstants push_constants;
-	// push_constants.floatBufferResolution = FloatBufferResolution;
-	// push_constants.presentBufferResolution = glm::vec2( drawExtent.width, drawExtent.height );
-
-	// vkCmdPushConstants( cmd, meshPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof( GPUDrawPushConstants ), &push_constants );
-
+	// launch a draw command to do the fullscreen triangle
+	vkCmdDraw( cmd, 3, 1, 0, 0 );
 	vkCmdEndRendering( cmd );
 }
 

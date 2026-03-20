@@ -82,8 +82,10 @@ class PrometheusInstance {
 public:
 
 // physarum data/storage resources
-	uint32_t numAgents = 10000;
+	uint32_t numAgents = 10000 * 16;
 	AllocatedBuffer simAgentBuffer;
+	AllocatedBuffer physarumGlobalUBO;
+	GlobalData globalData; // goes into the UBO
 
 	glm::uvec2 FloatBufferResolution{ 1024, 512 };
 	AllocatedImage FloatBufferA;
@@ -158,7 +160,6 @@ public:
 	VkCommandPool immediateCommandPool;
 	void immediateSubmit( std::function< void( VkCommandBuffer cmd ) > && function );
 
-	GlobalData globalData;
 	DescriptorAllocatorGrowable globalDescriptorAllocator;
 
 	VkDescriptorSet drawImageDescriptors;
@@ -206,7 +207,7 @@ private:
 
 	// main loop helpers
 	void drawImgui ( VkCommandBuffer cmd, VkImageView targetImageView );
-	void drawGeometry ( VkCommandBuffer cmd );
+	void physarumFullscreenTriangle ( VkCommandBuffer cmd );
 
 	// swapchain helpers
 	void resizeSwapchain ();
