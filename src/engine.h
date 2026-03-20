@@ -160,7 +160,6 @@ public:
 
 	GlobalData globalData;
 	DescriptorAllocatorGrowable globalDescriptorAllocator;
-	VkDescriptorSetLayout gpuSceneDataDescriptorLayout;
 
 	VkDescriptorSet drawImageDescriptors;
 	VkDescriptorSetLayout drawImageDescriptorLayout;

@@ -428,12 +428,6 @@ void PrometheusInstance::initDescriptors  () {
 		drawImageDescriptorLayout = builder.build( device, VK_SHADER_STAGE_COMPUTE_BIT );
 	}
 
-	{
-		DescriptorLayoutBuilder builder;
-		builder.add_binding( 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER );
-		gpuSceneDataDescriptorLayout = builder.build( device, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT );
-	}
-
 	drawImageDescriptors = globalDescriptorAllocator.allocate( device, drawImageDescriptorLayout );
 
 	VkDescriptorImageInfo imgInfo{};
@@ -727,25 +721,6 @@ void PrometheusInstance::drawGeometry ( VkCommandBuffer cmd ) {
 	VkRenderingAttachmentInfo colorAttachment = vkinit::attachment_info( drawImage.imageView, nullptr, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL );
 	VkRenderingAttachmentInfo depthAttachment = vkinit::depth_attachment_info( depthImage.imageView, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL );
 	VkRenderingInfo renderInfo = vkinit::rendering_info( drawExtent, &colorAttachment, &depthAttachment );
-
-	//allocate a new uniform buffer for the scene data
-	AllocatedBuffer gpuSceneDataBuffer = createBuffer( sizeof( GlobalData ), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU );
-
-	//add it to the deletion queue of this frame so it gets deleted once its been used
-	getCurrentFrame().deletionQueue.push_function( [ =, this ] () {
-		destroyBuffer( gpuSceneDataBuffer );
-	});
-
-	//write the buffer
-	GlobalData* globalUniformData = ( GlobalData * ) gpuSceneDataBuffer.allocation->GetMappedData();
-	*globalUniformData = globalData;
-
-	// create a descriptor set that binds that buffer and update it
-	VkDescriptorSet globalDescriptor = getCurrentFrame().frameDescriptors.allocate( device, gpuSceneDataDescriptorLayout );
-
-	DescriptorWriter writer;
-	writer.write_buffer( 0, gpuSceneDataBuffer.buffer, sizeof( GlobalData ), 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER );
-	writer.update_set( device, globalDescriptor );
 
 	vkCmdBeginRendering( cmd, &renderInfo );
 	// vkCmdBindPipeline( cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, trianglePipeline );
