@@ -93,14 +93,23 @@ void PrometheusInstance::Draw () {
 	drawExtent.width = uint32_t( std::min( swapchainExtent.width, drawImage.imageExtent.width ) * renderScale );
 
 	// update the UBO
-	// globalData.placeholder6.x = float( frameNumber );
+	globalData.floatBufferResolution = FloatBufferResolution;
+	globalData.presentBufferResolution = glm::uvec2( drawExtent.width, drawExtent.height );
+
 	GlobalData* uniformData = ( GlobalData * ) physarumGlobalUBO.allocation->GetMappedData();
 	*uniformData = globalData;
 
 	// updating the push constants, as needed:
-	// physarumGlobalPushConstant.wangSeed =
-	physarumGlobalPushConstant.floatBufferResolution = FloatBufferResolution;
-	physarumGlobalPushConstant.presentBufferResolution = glm::uvec2( drawExtent.width, drawExtent.height );
+
+	static thread_local std::mt19937 seedRNG( [] {
+	// RNG ( mostly for generating GPU-side RNG seed)
+		std::random_device rd;
+		std::seed_seq seq{  rd(), rd(), rd(), rd(), rd(), rd(), rd(), rd() };
+		return std::mt19937( seq );
+	} () );
+
+	physarumGlobalPushConstant.wangSeed = std::uniform_int_distribution<uint32_t>{}( seedRNG );
+
 
 	// start the command buffer recording
 	VK_CHECK( vkBeginCommandBuffer( cmd, &cmdBeginInfo ) );
@@ -136,7 +145,7 @@ void PrometheusInstance::Draw () {
 
 	vkCmdPipelineBarrier( cmd,
 		VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-		VK_PIPELINE_STAGE_VERTEX_SHADER_BIT, // or whatever consumes it
+		VK_PIPELINE_STAGE_VERTEX_SHADER_BIT,
 		0,
 		0, NULL,
 		1, &bufferBarrier,

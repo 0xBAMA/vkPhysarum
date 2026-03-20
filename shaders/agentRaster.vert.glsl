@@ -10,4 +10,6 @@ void main () {
 	// placeholder, can potentially do larger and do some kernel work in the frag shader
 	gl_PointSize = 1.0f;
 
+	//
+
 }

@@ -6,5 +6,6 @@
 #include "common.h"
 
 void main () {
+	// this is an additive raster process
 
 }

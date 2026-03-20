@@ -3,6 +3,7 @@
 #include <iostream>
 #include <chrono>
 #include <thread>
+#include <random>
 
 #include <vk_types.h>
 #include <vk_descriptors.h>
@@ -45,20 +46,14 @@ struct frameData_t {
 
 // common configuration across all shaders
 struct GlobalData {
-	glm::mat4 placeholder0;
-	glm::mat4 placeholder1;
-	glm::mat4 placeholder2;
-	glm::vec4 placeholder3;
-	glm::vec4 placeholder4;
-	glm::vec4 placeholder5;
-	glm::vec4 placeholder6;
-};
-
-struct PushConstants {
 	glm::uvec2 floatBufferResolution;
 	glm::uvec2 presentBufferResolution;
+};
+
+// smallest scope CPU->GPU passing of information
+struct PushConstants {
 	uint32_t wangSeed;
-	uint32_t operation;
+	int32_t operation;
 };
 
 constexpr unsigned int FRAME_OVERLAP = 2;

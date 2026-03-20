@@ -1,33 +1,26 @@
 // trying this out - keeping a common set of descriptors across all shaders
 //=========================================================
-// push constants block
+// push constants block - updated at smallest scope
 layout( push_constant ) uniform constants {
-// buffer resolutions:
-	uvec2 floatBufferResolution;
-	uvec2 presentBufferResolution;
-
-// RNG seeding
+// RNG seeding from the CPU
 	uint wangSeed;
 
 // specifying specific operations to be performed
 	// e.g. if I want to randomly seed the agent positions
-	uint operation;
-
-// can also include the ranges for the Agent generation parameters
-	// we have plenty of space (using 24 of 256 bytes so far)
+	int operation;
 
 } PushConstants;
 //=========================================================
 // Global config etc data in a UBO
-layout( set = 0, binding = 0 ) uniform GlobalData {
-	mat4 placeholder0;
-	mat4 placeholder1;
-	mat4 placeholder2;
-	vec4 placeholder3;
-	vec4 placeholder4;
-	vec4 placeholder5;
-	vec4 placeholder6;
-} globalData;
+layout( set = 0, binding = 0 ) uniform globalData {
+	// buffer resolutions:
+	uvec2 floatBufferResolution;
+	uvec2 presentBufferResolution;
+
+	// some initial usage here for base parameters + jitter
+
+
+} GlobalData;
 //=========================================================
 // then the SSBO for the agents
 struct Agent {
