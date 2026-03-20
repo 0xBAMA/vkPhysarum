@@ -12,6 +12,10 @@ layout( push_constant ) uniform constants {
 // specifying specific operations to be performed
 	// e.g. if I want to randomly seed the agent positions
 	uint operation;
+
+// can also include the ranges for the Agent generation parameters
+	// we have plenty of space (using 24 of 256 bytes so far)
+
 } PushConstants;
 //=========================================================
 // Global config etc data in a UBO
@@ -27,6 +31,7 @@ layout( set = 0, binding = 0 ) uniform GlobalData {
 //=========================================================
 // then the SSBO for the agents
 struct Agent {
+	// simulation parameters
 	float mass;
 	float pad;
 	float drag;
@@ -35,6 +40,8 @@ struct Agent {
 	float turnAngle;
 	float forceAmount; // replaces stepsize
 	float depositAmount;
+
+	// dynamic sim state
 	vec2 position;
 	vec2 velocity;
 };
