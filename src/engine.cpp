@@ -109,7 +109,52 @@ void PrometheusInstance::Draw () {
 	// 6. Barrier to make sure the GPU finishes updating Float Buffer B
 	// 7. Compute a vertical blur back into Float buffer A
 
-	// put the draw image in a color attachment mode
+	// 1
+		// shader to update the agents
+	vkCmdBindPipeline( cmd, VK_PIPELINE_BIND_POINT_COMPUTE, agentUpdatePipeline );
+	vkCmdBindDescriptorSets( cmd, VK_PIPELINE_BIND_POINT_COMPUTE,  physarumGlobalPipelineLayout, 0, 1, &physarumGlobalDescriptorSet, 0, nullptr );
+	vkCmdPushConstants( cmd, physarumGlobalPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof( PushConstants ), &physarumGlobalPushConstant );
+	vkCmdDispatch( cmd, numAgents / 16, 1, 1 );
+
+	// 2
+		// barrier for the agent memory update
+	VkBufferMemoryBarrier bufferBarrier = {
+		.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+		.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
+		.dstAccessMask = VK_ACCESS_SHADER_READ_BIT,
+		.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		.buffer = simAgentBuffer.buffer,
+		.offset = 0,
+		.size = VK_WHOLE_SIZE
+	};
+
+	vkCmdPipelineBarrier( cmd,
+		VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+		VK_PIPELINE_STAGE_VERTEX_SHADER_BIT, // or whatever consumes it
+		0,
+		0, NULL,
+		1, &bufferBarrier,
+		0, NULL
+	);
+
+	// 3
+		// additive raster for the agent locations
+
+	// 4
+		// barrier for the color attachment
+
+	// 5
+		// blur pass 1
+
+	// 6
+		// barrier to make sure blur pass 1 completes
+
+	// 7
+		// blur pass 2
+
+	// preparing output
+		// put the draw image in a color attachment mode
 	vkutil::transition_image( cmd, drawImage.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL );
 	vkutil::transition_image( cmd, depthImage.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL );
 
