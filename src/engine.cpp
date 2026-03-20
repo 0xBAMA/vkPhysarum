@@ -487,7 +487,8 @@ void PrometheusInstance::initResources () {
 
 	// create the two Float Buffer images ( A + B )
 	VkExtent3D bufferExtent = { FloatBufferResolution.y, FloatBufferResolution.y, 1 };
-	FloatBufferA = createImage( bufferExtent, VK_FORMAT_R32_SFLOAT, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT );
+	// FloatBufferA = createImage( bufferExtent, VK_FORMAT_R32_SFLOAT, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT  );
+	FloatBufferA = createImage( bufferExtent, VK_FORMAT_R32_SFLOAT, VK_IMAGE_USAGE_STORAGE_BIT );
 	FloatBufferB = createImage( bufferExtent, VK_FORMAT_R32_SFLOAT, VK_IMAGE_USAGE_STORAGE_BIT );
 
 	// make sure to clean up at the end
@@ -518,7 +519,7 @@ void PrometheusInstance::initPipelines () {
 		DescriptorLayoutBuilder builder;
 		builder.add_binding( 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER ); // uniform buffer with global data
 		builder.add_binding( 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER ); // SSBO with the agent data
-		builder.add_binding( 2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER ); // Texture Float Buffer A
+		// builder.add_binding( 2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER ); // Texture Float Buffer A
 		builder.add_binding( 3, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE ); // image load/store Float Buffer A
 		builder.add_binding( 4, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE ); // image load/store Float Buffer B
 		physarumGlobalDescriptorSetLayout = builder.build( device, shaderStages );
@@ -526,8 +527,16 @@ void PrometheusInstance::initPipelines () {
 			vkDestroyDescriptorSetLayout( device, physarumGlobalDescriptorSetLayout, nullptr );
 		});
 
-		// I think we can actually go ahead and do the static allocation of the descriptor set
+		// I think we can actually go ahead and do the static allocation of the descriptor set + write the values into it
 		physarumGlobalDescriptorSet = globalDescriptorAllocator.allocate( device, physarumGlobalDescriptorSetLayout );
+
+		DescriptorWriter writer;
+		writer.write_buffer( 0, physarumGlobalUBO.buffer, sizeof( GlobalData ), 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER );
+		writer.write_buffer( 1, simAgentBuffer.buffer, numAgents * sizeof( Agent ), 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER  );
+		// writer.write_image( 2, FloatBufferA.imageView, defaultSamplerLinear, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER );
+		writer.write_image( 3, FloatBufferA.imageView, defaultSamplerNearest, VK_IMAGE_LAYOUT_GENERAL, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE );
+		writer.write_image( 4, FloatBufferB.imageView, defaultSamplerNearest, VK_IMAGE_LAYOUT_GENERAL, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE );
+		writer.update_set( device, physarumGlobalDescriptorSet );
 	}
 
 	// and we are set up with a single descriptor set containing everything (UBO+SSBO+Textures)
