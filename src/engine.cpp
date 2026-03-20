@@ -468,16 +468,6 @@ void PrometheusInstance::initDescriptors  () {
 			frameData[ i ].frameDescriptors.destroy_pools( device );
 		});
 	}
-
-// adding the descriptor stuff for the global descriptor set...
-// first need to create the descriptor set layout, then the descriptor set...
-
-
-
-// then use the DescriptorWriter to write it
-	// DescriptorWriter writer;
-	// writer.write_buffer( 0, gpuSceneDataBuffer.buffer, sizeof( BasicGPUSceneData ), 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER );
-	// writer.update_set( device, globalDescriptor );
 }
 
 void PrometheusInstance::initResources () {
@@ -489,101 +479,194 @@ void PrometheusInstance::initResources () {
 	VkExtent3D bufferExtent = { FloatBufferResolution.y, FloatBufferResolution.y, 1 };
 	FloatBufferA = createImage( bufferExtent, VK_FORMAT_R32_SFLOAT, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT );
 	FloatBufferB = createImage( bufferExtent, VK_FORMAT_R32_SFLOAT, VK_IMAGE_USAGE_STORAGE_BIT );
+
+	// make sure to clean up at the end
+	mainDeletionQueue.push_function([ & ] () {
+		destroyBuffer( simAgentBuffer );
+		destroyImage( FloatBufferA );
+		destroyImage( FloatBufferB );
+	});
 }
 
 void PrometheusInstance::initPipelines () {
+// we share a lot of the init across all pipelines...
 
-// we actually share a lot of the init across each one of these...
+// the actual pipeline layout itself consists of two parts - push constants + descriptor set layout
+	VkPipelineLayoutCreateInfo pipelineLayout = vkinit::pipeline_layout_create_info();
+	VkShaderStageFlags shaderStages = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT; // making these accessible to all shader stages (compute + raster)
 
 	// configuration for the push constants
+	VkPushConstantRange pushConstants = {};
+	pushConstants.offset = 0;
+	pushConstants.size = sizeof( PushConstants );
+	pushConstants.stageFlags = shaderStages;
+	pipelineLayout.pPushConstantRanges = &pushConstants;
+	pipelineLayout.pushConstantRangeCount = 1;
 
-	// configuration for the descriptor set
+	{ // configure descriptor set layout -> descriptor set allocation
+		DescriptorLayoutBuilder builder;
+		builder.add_binding( 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER ); // uniform buffer with global data
+		builder.add_binding( 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER ); // SSBO with the agent data
+		builder.add_binding( 2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER ); // Texture Float Buffer A
+		builder.add_binding( 3, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE ); // image load/store Float Buffer A
+		builder.add_binding( 4, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE ); // image load/store Float Buffer B
+		physarumGlobalDescriptorSetLayout = builder.build( device, shaderStages );
+		mainDeletionQueue.push_function([ & ] () {
+			vkDestroyDescriptorSetLayout( device, physarumGlobalDescriptorSetLayout, nullptr );
+		});
 
-	// the actual pipeline layout itself
+		// I think we can actually go ahead and do the static allocation of the descriptor set
+		physarumGlobalDescriptorSet = globalDescriptorAllocator.allocate( device, physarumGlobalDescriptorSetLayout );
+	}
 
+	// and we are set up with a single descriptor set containing everything (UBO+SSBO+Textures)
+	pipelineLayout.pSetLayouts = &physarumGlobalDescriptorSetLayout;
+	pipelineLayout.setLayoutCount = 1;
+
+	// and now we're going to create the pipeline layout shared across all the pipelines
+	VK_CHECK( vkCreatePipelineLayout( device, &pipelineLayout, nullptr, &physarumGlobalPipelineLayout ) );
+
+	mainDeletionQueue.push_function([ & ] () {
+		vkDestroyPipelineLayout( device, physarumGlobalPipelineLayout, nullptr );
+	});
 
 // then there are 4 separate pipelines that need to be created
 
-	// initAgentUpdatePipeline();		// compute
+	{ // Agent Update ( Compute )
+		// This is the compute shader that does all the simulation update logic
+		VkShaderModule agentUpdateShader;
+		const char * shaderPath = "../shaders/agentUpdate.comp.glsl.spv";
+		if ( !vkutil::load_shader_module( shaderPath, device, &agentUpdateShader ) ) {
+			fmt::print( "Error when building the Agent Update shader\n" );
+		}
 
-	// initAgentRasterPipeline();		// raster
+		VkPipelineShaderStageCreateInfo stageinfo{};
+		stageinfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+		stageinfo.pNext = nullptr;
+		stageinfo.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+		stageinfo.module = agentUpdateShader;
+		stageinfo.pName = "main";
 
-	// initBufferBlurPipeline();		// compute
+		VkComputePipelineCreateInfo computePipelineCreateInfo{};
+		computePipelineCreateInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+		computePipelineCreateInfo.pNext = nullptr;
+		computePipelineCreateInfo.layout = physarumGlobalPipelineLayout;
+		computePipelineCreateInfo.stage = stageinfo;
 
-	// initBufferPresentPipeline();		// raster
+		// create the pipeline
+		VK_CHECK( vkCreateComputePipelines( device, VK_NULL_HANDLE, 1, &computePipelineCreateInfo, nullptr, &agentUpdatePipeline ) );
 
+		// cleanup
+		vkDestroyShaderModule( device, agentUpdateShader, nullptr );
 
-}
-
-// VkPushConstantRange GlobalDataUBO{};
-// GlobalDataUBO.offset = 0;
-// GlobalDataUBO.size = sizeof( GlobalData );
-// GlobalDataUBO.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
-//
-// DescriptorLayoutBuilder layoutBuilder;
-// layoutBuilder.add_binding( 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER );
-// layoutBuilder.add_binding( 1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE );
-// layoutBuilder.add_binding( 2, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE );
-//
-// materialLayout = layoutBuilder.build( device, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT );
-//
-// VkDescriptorSetLayout layouts[] = { GlobalDataUBO, AgentBufferSSBO, ContinuumTextures };
-//
-// VkPipelineLayoutCreateInfo pipeline_layout_info = vkinit::pipeline_layout_create_info();
-// pipeline_layout_info.setLayoutCount = 3;
-// pipeline_layout_info.pSetLayouts = layouts;
-// pipeline_layout_info.pPushConstantRanges = &GlobalDataPushConstants;
-// pipeline_layout_info.pushConstantRangeCount = 1;
-// VK_CHECK( vkCreatePipelineLayout( device, &pipeline_layout_info, nullptr, &bufferPresentPipelineLayout ) );
-
-/*
-void PrometheusInstance::initBufferPresentPipeline () {
-	VkShaderModule bufferPresentFragShader;
-	if ( !vkutil::load_shader_module( "../shaders/bufferPresent.frag.glsl.spv", device, &bufferPresentFragShader ) ) {
-		fmt::print( "Error when building the buffer present fragment shader module\n" );
-	} else {
-		fmt::print( "Buffer present fragment shader successfully loaded\n" );
+		mainDeletionQueue.push_function( [ & ] () {
+			vkDestroyPipeline( device, agentUpdatePipeline, nullptr );
+		});
 	}
 
-	VkShaderModule bufferPresentVertexShader;
-	if ( !vkutil::load_shader_module( "../shaders/bufferPresent.vert.glsl.spv", device, &bufferPresentVertexShader ) ) {
-		fmt::print( "Error when building the buffer present vertex shader module\n" );
-	} else {
-		fmt::print( "Buffer present vertex shader successfully loaded\n" );
+	{ // Agent Raster/Splatting ( Raster )
+		// This is the pipeline doing additive raster, to replace atomic writes
+		VkShaderModule agentRasterFragShader;
+		if ( !vkutil::load_shader_module( "../shaders/agentRaster.frag.glsl.spv", device, &agentRasterFragShader ) ) {
+			fmt::print( "Error when building the Agent Raster fragment shader module\n" );
+		} else {
+			fmt::print( "Agent Raster fragment shader successfully loaded\n" );
+		}
+
+		VkShaderModule agentRasterVertexShader;
+		if ( !vkutil::load_shader_module( "../shaders/agentRaster.vert.glsl.spv", device, &agentRasterVertexShader ) ) {
+			fmt::print( "Error when building the Agent Raster vertex shader module\n" );
+		} else {
+			fmt::print( "Agent Raster vertex shader successfully loaded\n" );
+		}
+
+		PipelineBuilder pipelineBuilder;
+		pipelineBuilder._pipelineLayout = physarumGlobalPipelineLayout;
+		pipelineBuilder.set_shaders( agentRasterVertexShader, agentRasterFragShader );
+		pipelineBuilder.set_input_topology( VK_PRIMITIVE_TOPOLOGY_POINT_LIST );
+		pipelineBuilder.set_polygon_mode( VK_POLYGON_MODE_FILL );
+		pipelineBuilder.set_cull_mode( VK_CULL_MODE_NONE, VK_FRONT_FACE_CLOCKWISE );
+		pipelineBuilder.set_multisampling_none();
+		pipelineBuilder.enable_blending_additive();
+		pipelineBuilder.disable_depthtest();
+		pipelineBuilder.set_color_attachment_format( FloatBufferA.imageFormat );
+		agentRasterPipeline = pipelineBuilder.build_pipeline( device );
+
+		// cleanup
+		vkDestroyShaderModule( device, agentRasterFragShader, nullptr );
+		vkDestroyShaderModule( device, agentRasterVertexShader, nullptr );
+
+		mainDeletionQueue.push_function( [ & ] ()  {
+			vkDestroyPipeline( device, agentRasterPipeline, nullptr );
+		});
 	}
 
-// two pieces are needed (for all these):
-	// push constant config needs to happen
+	{ // Buffer Blur ( Compute )
+		// Additive result needs to be blurred A->B->A with attenuation factor applied
+		VkShaderModule bufferBlurShader;
+		const char * shaderPath = "../shaders/agentUpdate.comp.glsl.spv";
+		if ( !vkutil::load_shader_module( shaderPath, device, &bufferBlurShader ) ) {
+			fmt::print( "Error when building the Agent Update shader\n" );
+		}
 
-	// descriptor set 0, binding 0 is the UBO for global data
-	// descriptor set 0, binding 1 is the SSBO for agent data
-	// descriptor set 0, binding 2 is the texture interface for Float Buffer A
-	// descriptor set 0, binding 3 is the image interface for Float Buffer A
-	// descriptor set 0, binding 4 is the image interface for Float Buffer B
+		VkPipelineShaderStageCreateInfo stageinfo{};
+		stageinfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+		stageinfo.pNext = nullptr;
+		stageinfo.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+		stageinfo.module = bufferBlurShader;
+		stageinfo.pName = "main";
 
-	// building the pipeline for a fullscreen triangle
-	PipelineBuilder pipelineBuilder;
-	pipelineBuilder._pipelineLayout = bufferPresentPipelineLayout;
-	pipelineBuilder.set_shaders( bufferPresentVertexShader, bufferPresentFragShader );
-	pipelineBuilder.set_input_topology( VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST );
-	pipelineBuilder.set_polygon_mode( VK_POLYGON_MODE_FILL );
-	pipelineBuilder.set_cull_mode( VK_CULL_MODE_NONE, VK_FRONT_FACE_CLOCKWISE );
-	pipelineBuilder.set_multisampling_none();
-	pipelineBuilder.disable_blending();
-	pipelineBuilder.disable_depthtest();
-	pipelineBuilder.set_color_attachment_format( drawImage.imageFormat );
-	pipelineBuilder.set_depth_format( depthImage.imageFormat );
-	bufferPresentPipeline = pipelineBuilder.build_pipeline( device );
+		VkComputePipelineCreateInfo computePipelineCreateInfo{};
+		computePipelineCreateInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+		computePipelineCreateInfo.pNext = nullptr;
+		computePipelineCreateInfo.layout = physarumGlobalPipelineLayout;
+		computePipelineCreateInfo.stage = stageinfo;
 
-	vkDestroyShaderModule( device, bufferPresentFragShader, nullptr );
-	vkDestroyShaderModule( device, bufferPresentVertexShader, nullptr );
+		// create the pipeline
+		VK_CHECK( vkCreateComputePipelines( device, VK_NULL_HANDLE, 1, &computePipelineCreateInfo, nullptr, &bufferBlurPipeline ) );
+		vkDestroyShaderModule( device, bufferBlurShader, nullptr );
+		mainDeletionQueue.push_function( [ & ] () {
+			vkDestroyPipeline( device, bufferBlurPipeline, nullptr );
+		});
+	}
 
-	mainDeletionQueue.push_function( [ & ] ()  {
-		vkDestroyPipelineLayout( device, bufferPresentPipelineLayout, nullptr );
-		vkDestroyPipeline( device, bufferPresentPipeline, nullptr );
-	});
+	{ // Buffer Present ( Raster )
+		// Bare bones fullscreen triangle to show the simulation buffer
+		VkShaderModule bufferPresentFragShader;
+		if ( !vkutil::load_shader_module( "../shaders/bufferPresent.frag.glsl.spv", device, &bufferPresentFragShader ) ) {
+			fmt::print( "Error when building the Buffer Present fragment shader module\n" );
+		} else {
+			fmt::print( "Buffer Present fragment shader successfully loaded\n" );
+		}
+
+		VkShaderModule bufferPresentVertexShader;
+		if ( !vkutil::load_shader_module( "../shaders/bufferPresent.vert.glsl.spv", device, &bufferPresentVertexShader ) ) {
+			fmt::print( "Error when building the Buffer Present vertex shader module\n" );
+		} else {
+			fmt::print( "Buffer Present vertex shader successfully loaded\n" );
+		}
+
+		PipelineBuilder pipelineBuilder;
+		pipelineBuilder._pipelineLayout = physarumGlobalPipelineLayout;
+		pipelineBuilder.set_shaders( bufferPresentVertexShader, bufferPresentFragShader );
+		pipelineBuilder.set_input_topology( VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST );
+		pipelineBuilder.set_polygon_mode( VK_POLYGON_MODE_FILL );
+		pipelineBuilder.set_cull_mode( VK_CULL_MODE_NONE, VK_FRONT_FACE_CLOCKWISE );
+		pipelineBuilder.set_multisampling_none();
+		pipelineBuilder.enable_blending_additive();
+		pipelineBuilder.disable_depthtest();
+		pipelineBuilder.set_color_attachment_format( FloatBufferA.imageFormat );
+		bufferPresentPipeline = pipelineBuilder.build_pipeline( device );
+
+		// cleanup
+		vkDestroyShaderModule( device, bufferPresentFragShader, nullptr );
+		vkDestroyShaderModule( device, bufferPresentVertexShader, nullptr );
+
+		mainDeletionQueue.push_function( [ & ] ()  {
+			vkDestroyPipeline( device, bufferPresentPipeline, nullptr );
+		});
+	}
 }
-*/
 
 AllocatedBuffer PrometheusInstance::createBuffer ( size_t allocSize, VkBufferUsageFlags usage, VmaMemoryUsage memoryUsage ) {
 	// allocate buffer
@@ -729,8 +812,8 @@ void PrometheusInstance::drawGeometry ( VkCommandBuffer cmd ) {
 	VkViewport viewport = {};
 	viewport.x = 0;
 	viewport.y = 0;
-	viewport.width = drawExtent.width;
-	viewport.height = drawExtent.height;
+	viewport.width = float( drawExtent.width );
+	viewport.height = float( drawExtent.height );
 	viewport.minDepth = 0.0f;
 	viewport.maxDepth = 1.0f;
 	vkCmdSetViewport( cmd, 0, 1, &viewport );
