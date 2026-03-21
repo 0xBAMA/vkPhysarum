@@ -53,7 +53,7 @@ struct GlobalData {
 // smallest scope CPU->GPU passing of information
 struct PushConstants {
 	uint32_t wangSeed;
-	int32_t operation;
+	int32_t operation = -1;
 };
 
 constexpr unsigned int FRAME_OVERLAP = 2;

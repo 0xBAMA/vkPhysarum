@@ -43,7 +43,9 @@ void main () {
 
 	if ( PushConstants.operation == -1 ) {
 		// generating new, random values
-
+		MYAGENT.position.x = BUFFERSIZE.x * NormalizedRandomFloat();
+		MYAGENT.position.y = BUFFERSIZE.y * NormalizedRandomFloat();
+	} else {
 	// do the regular agent update...
 		// sense taps, reading from the pheremone buffer
 
@@ -55,7 +57,5 @@ void main () {
 		if ( clamp( MYAGENT.position, vec2( 0.0f ), BUFFERSIZE ) != MYAGENT.position ) {
 			MYAGENT.position = wrap( MYAGENT.position );
 		}
-	} else {
-
 	}
 }

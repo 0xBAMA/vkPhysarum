@@ -132,6 +132,9 @@ void PrometheusInstance::Draw () {
 
 	// 2
 		// barrier for the agent memory update
+	// if we just did a reset op, clear it
+	if ( physarumGlobalPushConstant.operation = -1 )
+		physarumGlobalPushConstant.operation = 0;
 	VkBufferMemoryBarrier bufferBarrier = {
 		.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
 		.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
