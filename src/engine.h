@@ -77,12 +77,12 @@ class PrometheusInstance {
 public:
 
 // physarum data/storage resources
-	uint32_t numAgents = 10000 * 16;
+	uint32_t numAgents = 1000 * 16;
 	AllocatedBuffer simAgentBuffer;
 	AllocatedBuffer physarumGlobalUBO;
 	GlobalData globalData; // goes into the UBO
 
-	glm::uvec2 FloatBufferResolution{ 1024, 512 };
+	VkExtent2D FloatBufferResolution{ 1024, 512 };
 	AllocatedImage FloatBufferA;
 	AllocatedImage FloatBufferB;
 

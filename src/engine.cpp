@@ -93,7 +93,7 @@ void PrometheusInstance::Draw () {
 	drawExtent.width = uint32_t( std::min( swapchainExtent.width, drawImage.imageExtent.width ) * renderScale );
 
 	// update the UBO
-	globalData.floatBufferResolution = FloatBufferResolution;
+	globalData.floatBufferResolution = glm::uvec2( FloatBufferResolution.width, FloatBufferResolution.height );
 	globalData.presentBufferResolution = glm::uvec2( drawExtent.width, drawExtent.height );
 
 	GlobalData* uniformData = ( GlobalData * ) physarumGlobalUBO.allocation->GetMappedData();
@@ -108,8 +108,8 @@ void PrometheusInstance::Draw () {
 		return std::mt19937( seq );
 	} () );
 
-	physarumGlobalPushConstant.wangSeed = std::uniform_int_distribution<uint32_t>{}( seedRNG );
-
+	physarumGlobalPushConstant.wangSeed = std::uniform_int_distribution< uint32_t >{}( seedRNG );
+	// float x = std::uniform_real_distribution< float >( min, max )( seedRNG );
 
 	// start the command buffer recording
 	VK_CHECK( vkBeginCommandBuffer( cmd, &cmdBeginInfo ) );
@@ -123,18 +123,26 @@ void PrometheusInstance::Draw () {
 	// 6. Barrier to make sure the GPU finishes updating Float Buffer B
 	// 7. Compute a vertical blur back into Float buffer A
 
-	// 1
-		// shader to update the agents
+// 1
+	// bind the pipeline to update the agents
 	vkCmdBindPipeline( cmd, VK_PIPELINE_BIND_POINT_COMPUTE, agentUpdatePipeline );
+
+	// bind descriptor sets, do the push constants
 	vkCmdBindDescriptorSets( cmd, VK_PIPELINE_BIND_POINT_COMPUTE,  physarumGlobalPipelineLayout, 0, 1, &physarumGlobalDescriptorSet, 0, nullptr );
 	vkCmdPushConstants( cmd, physarumGlobalPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof( PushConstants ), &physarumGlobalPushConstant );
+
+	// setup for texture read
+	vkutil::transition_image( cmd, FloatBufferA.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL );
+
+	// and we're ready to do the agent update
 	vkCmdDispatch( cmd, numAgents / 16, 1, 1 );
 
-	// 2
-		// barrier for the agent memory update
 	// if we just did a reset op, clear it
 	if ( physarumGlobalPushConstant.operation = -1 )
 		physarumGlobalPushConstant.operation = 0;
+
+// 2
+	// barrier for the agent memory update...
 	VkBufferMemoryBarrier bufferBarrier = {
 		.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
 		.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
@@ -145,7 +153,7 @@ void PrometheusInstance::Draw () {
 		.offset = 0,
 		.size = VK_WHOLE_SIZE
 	};
-
+	// we need the vertex shader to wait on compute
 	vkCmdPipelineBarrier( cmd,
 		VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
 		VK_PIPELINE_STAGE_VERTEX_SHADER_BIT,
@@ -155,20 +163,137 @@ void PrometheusInstance::Draw () {
 		0, NULL
 	);
 
-	// 3
-		// additive raster for the agent locations
+	// this image is now going from usage as a texture... to usage as a raster color attachment
+	vkutil::transition_image( cmd, FloatBufferA.image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL );
 
-	// 4
-		// barrier for the color attachment
+// 3
+	// additive raster for the agent locations
+	VkRenderingAttachmentInfo colorAttachment = vkinit::attachment_info( FloatBufferA.imageView, nullptr, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL );
+	VkRenderingInfo renderInfo = vkinit::rendering_info( FloatBufferResolution, &colorAttachment, nullptr );
 
-	// 5
-		// blur pass 1
+	vkCmdBeginRendering( cmd, &renderInfo );
+	vkCmdBindPipeline( cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, agentRasterPipeline );
 
-	// 6
-		// barrier to make sure blur pass 1 completes
+	//set dynamic viewport and scissor
+	VkViewport viewport = {};
+	viewport.x = 0;
+	viewport.y = 0;
+	viewport.width = float( FloatBufferResolution.width );
+	viewport.height = float( FloatBufferResolution.height );
+	viewport.minDepth = 0.0f;
+	viewport.maxDepth = 1.0f;
+	vkCmdSetViewport( cmd, 0, 1, &viewport );
 
-	// 7
-		// blur pass 2
+	VkRect2D scissor = {};
+	scissor.offset.x = 0;
+	scissor.offset.y = 0;
+	scissor.extent.width = FloatBufferResolution.width;
+	scissor.extent.height = FloatBufferResolution.height;
+	vkCmdSetScissor( cmd, 0, 1, &scissor );
+
+	// draw all the agents as points
+	vkCmdBindDescriptorSets( cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,  physarumGlobalPipelineLayout, 0, 1, &physarumGlobalDescriptorSet, 0, nullptr );
+	vkCmdPushConstants( cmd, physarumGlobalPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof( PushConstants ), &physarumGlobalPushConstant );
+
+	// launch a draw command to do the fullscreen triangle
+	vkCmdDraw( cmd, numAgents, 1, 0, 0 );
+	vkCmdEndRendering( cmd );
+
+// 4
+	// barrier for the color attachment...
+	VkImageMemoryBarrier2 colorAttachmentBarrier {
+		.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+
+		.srcStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+		.srcAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+
+		// we need the compute to wait on the raster process to produce an output
+		.dstStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+		.dstAccessMask = VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_SHADER_WRITE_BIT,
+
+		// and it's going to next be used for storage by the second pass of the blur
+		.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+		.newLayout = VK_IMAGE_LAYOUT_GENERAL,
+
+		.image = FloatBufferA.image,
+		.subresourceRange = {
+			VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1
+		}
+	};
+
+	VkDependencyInfo colorAttachmentBarrierDependency {
+		.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+		.imageMemoryBarrierCount = 1,
+		.pImageMemoryBarriers = &colorAttachmentBarrier
+	};
+
+	vkCmdPipelineBarrier2( cmd, &colorAttachmentBarrierDependency );
+
+// 5
+	// blur pass 1
+
+// 6
+	// barrier to make sure blur pass 1 completes
+	VkImageMemoryBarrier2 blurPass1Barrier {
+		.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+
+		.srcStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+		.srcAccessMask = VK_ACCESS_2_SHADER_WRITE_BIT,
+
+		.dstStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+		.dstAccessMask = VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_SHADER_WRITE_BIT,
+
+		.oldLayout = VK_IMAGE_LAYOUT_GENERAL,
+		.newLayout = VK_IMAGE_LAYOUT_GENERAL,
+
+		.image = FloatBufferA.image,
+		.subresourceRange = {
+			VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1
+		}
+	};
+
+	VkDependencyInfo blurPass1BarrierDependency {
+		.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+		.imageMemoryBarrierCount = 1,
+		.pImageMemoryBarriers = &blurPass1Barrier
+	};
+
+	vkCmdPipelineBarrier2( cmd, &blurPass1BarrierDependency );
+
+// 7
+	// blur pass 2
+
+	// and that completes one iteration of the update... put Float Buffer A into filtered read mode
+	VkImageMemoryBarrier2 blurPass2Barrier {
+		.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+
+		.srcStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+		.srcAccessMask = VK_ACCESS_2_SHADER_WRITE_BIT,
+
+		.dstStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+		.dstAccessMask = VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_SHADER_WRITE_BIT,
+
+		// now the blur has finished, we are using the filtered reads until the next agent raster
+		.oldLayout = VK_IMAGE_LAYOUT_GENERAL,
+		// .newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+		.newLayout = VK_IMAGE_LAYOUT_GENERAL,
+
+		.image = FloatBufferA.image,
+		.subresourceRange = {
+			VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1
+		}
+	};
+
+	VkDependencyInfo blurPass2BarrierDependency {
+		.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+		.imageMemoryBarrierCount = 1,
+		.pImageMemoryBarriers = &blurPass2Barrier
+	};
+
+	vkCmdPipelineBarrier2( cmd, &blurPass2BarrierDependency );
+
+	// put back into undefined layout
+	// vkutil::transition_image( cmd, FloatBufferA.image, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_UNDEFINED );
 
 	// preparing output
 		// put the draw image in a color attachment mode
@@ -548,9 +673,9 @@ void PrometheusInstance::initResources () {
 	simAgentBuffer = createBuffer( numAgents * sizeof( Agent ), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_GPU_ONLY );
 
 	// create the two Float Buffer images ( A + B )
-	VkExtent3D bufferExtent = { FloatBufferResolution.y, FloatBufferResolution.y, 1 };
-	// FloatBufferA = createImage( bufferExtent, VK_FORMAT_R32_SFLOAT, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT  );
-	FloatBufferA = createImage( bufferExtent, VK_FORMAT_R32_SFLOAT, VK_IMAGE_USAGE_STORAGE_BIT );
+	VkExtent3D bufferExtent = { FloatBufferResolution.width, FloatBufferResolution.height, 1 };
+	FloatBufferA = createImage( bufferExtent, VK_FORMAT_R32_SFLOAT, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT  );
+	// FloatBufferA = createImage( bufferExtent, VK_FORMAT_R32_SFLOAT, VK_IMAGE_USAGE_STORAGE_BIT );
 	FloatBufferB = createImage( bufferExtent, VK_FORMAT_R32_SFLOAT, VK_IMAGE_USAGE_STORAGE_BIT );
 
 	// make sure to clean up at the end
@@ -578,8 +703,8 @@ void PrometheusInstance::initPipelines () {
 	pipelineLayout.pushConstantRangeCount = 1;
 
 	// and some default contents for the push constants
-	physarumGlobalPushConstant.floatBufferResolution = FloatBufferResolution;
-	physarumGlobalPushConstant.presentBufferResolution = glm::uvec2( drawExtent.width, drawExtent.height );
+	globalData.floatBufferResolution = glm::uvec2( FloatBufferResolution.width, FloatBufferResolution.height );
+	globalData.presentBufferResolution = glm::uvec2( drawExtent.width, drawExtent.height );
 
 	{ // configure descriptor set layout -> descriptor set allocation
 		DescriptorLayoutBuilder builder;
