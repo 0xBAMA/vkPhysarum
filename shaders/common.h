@@ -9,6 +9,9 @@ layout( push_constant ) uniform constants {
 	// e.g. if I want to randomly seed the agent positions
 	int operation;
 
+// specifying the blur operation
+	int blurOperation;
+
 } PushConstants;
 //=========================================================
 // Global config etc data in a UBO
@@ -18,6 +21,15 @@ layout( set = 0, binding = 0 ) uniform globalData {
 	uvec2 presentBufferResolution;
 
 	// some initial usage here for base parameters + jitter
+		// this is used to specify small variation on a single "preset"
+
+	/* some other parameterization lives here, like:
+
+		blur radius
+		decay rate
+		...
+
+	*/
 
 
 } GlobalData;
@@ -39,7 +51,11 @@ struct Agent {
 	vec2 velocity;
 };
 //=========================================================
+#ifdef RASTER
+layout ( set = 0, binding = 1, std430 ) readonly buffer AgentBuffer {
+#else
 layout ( set = 0, binding = 1, std430 ) buffer AgentBuffer {
+#endif
 	Agent agents[];
 };
 //=========================================================

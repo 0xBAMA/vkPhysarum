@@ -132,13 +132,13 @@ void PrometheusInstance::Draw () {
 	vkCmdPushConstants( cmd, physarumGlobalPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof( PushConstants ), &physarumGlobalPushConstant );
 
 	// setup for texture read
-	vkutil::transition_image( cmd, FloatBufferA.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL );
+	vkutil::transition_image( cmd, FloatBufferA.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL );
 
 	// and we're ready to do the agent update
 	vkCmdDispatch( cmd, numAgents / 16, 1, 1 );
 
 	// if we just did a reset op, clear it
-	if ( physarumGlobalPushConstant.operation = -1 )
+	if ( physarumGlobalPushConstant.operation == -1 )
 		physarumGlobalPushConstant.operation = 0;
 
 // 2
@@ -164,11 +164,12 @@ void PrometheusInstance::Draw () {
 	);
 
 	// this image is now going from usage as a texture... to usage as a raster color attachment
-	vkutil::transition_image( cmd, FloatBufferA.image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL );
+	vkutil::transition_image( cmd, FloatBufferA.image, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL );
 
 // 3
 	// additive raster for the agent locations
-	VkRenderingAttachmentInfo colorAttachment = vkinit::attachment_info( FloatBufferA.imageView, nullptr, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL );
+	VkClearValue clearColor = { 0.0f, 0.0f, 0.0f, 1.0f };
+	VkRenderingAttachmentInfo colorAttachment = vkinit::attachment_info( FloatBufferA.imageView, &clearColor, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL );
 	VkRenderingInfo renderInfo = vkinit::rendering_info( FloatBufferResolution, &colorAttachment, nullptr );
 
 	vkCmdBeginRendering( cmd, &renderInfo );
@@ -674,7 +675,7 @@ void PrometheusInstance::initResources () {
 
 	// create the two Float Buffer images ( A + B )
 	VkExtent3D bufferExtent = { FloatBufferResolution.width, FloatBufferResolution.height, 1 };
-	FloatBufferA = createImage( bufferExtent, VK_FORMAT_R32_SFLOAT, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT  );
+	FloatBufferA = createImage( bufferExtent, VK_FORMAT_R32_UINT, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT  );
 	// FloatBufferA = createImage( bufferExtent, VK_FORMAT_R32_SFLOAT, VK_IMAGE_USAGE_STORAGE_BIT );
 	FloatBufferB = createImage( bufferExtent, VK_FORMAT_R32_SFLOAT, VK_IMAGE_USAGE_STORAGE_BIT );
 
@@ -724,8 +725,8 @@ void PrometheusInstance::initPipelines () {
 		DescriptorWriter writer;
 		writer.write_buffer( 0, physarumGlobalUBO.buffer, sizeof( GlobalData ), 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER );
 		writer.write_buffer( 1, simAgentBuffer.buffer, numAgents * sizeof( Agent ), 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER  );
-		// writer.write_image( 2, FloatBufferA.imageView, defaultSamplerLinear, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER );
-		writer.write_image( 3, FloatBufferA.imageView, defaultSamplerNearest, VK_IMAGE_LAYOUT_GENERAL, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE );
+		writer.write_image( 2, FloatBufferA.imageView, defaultSamplerLinear, VK_IMAGE_LAYOUT_GENERAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER );
+		// writer.write_image( 3, FloatBufferA.imageView, defaultSamplerNearest, VK_IMAGE_LAYOUT_GENERAL, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE );
 		writer.write_image( 4, FloatBufferB.imageView, defaultSamplerNearest, VK_IMAGE_LAYOUT_GENERAL, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE );
 		writer.update_set( device, physarumGlobalDescriptorSet );
 	}
