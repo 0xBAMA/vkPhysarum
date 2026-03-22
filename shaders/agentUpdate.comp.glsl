@@ -45,6 +45,8 @@ void main () {
 		// generating new, random values
 		MYAGENT.position.x = BUFFERSIZE.x * NormalizedRandomFloat();
 		MYAGENT.position.y = BUFFERSIZE.y * NormalizedRandomFloat();
+
+		MYAGENT.velocity = 0.1f * normalize( RandomInUnitDisk() );
 	} else {
 	// do the regular agent update...
 		// sense taps, reading from the pheremone buffer
@@ -52,6 +54,7 @@ void main () {
 		// turn decision, based on the sense readings
 
 		// move the agent based on the current velocity
+		MYAGENT.position += MYAGENT.velocity;
 
 		// wrap the position to keep it in-bounds for the raster process
 		if ( clamp( MYAGENT.position, vec2( 0.0f ), BUFFERSIZE ) != MYAGENT.position ) {
