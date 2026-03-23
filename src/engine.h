@@ -73,6 +73,10 @@ struct Agent {
 	glm::vec2 velocity;
 };
 
+struct ComputeEffect {
+	
+};
+
 class PrometheusInstance {
 public:
 
@@ -94,20 +98,26 @@ public:
 	PushConstants physarumGlobalPushConstant;
 
 // and the pipeline layout which contains the information for the descriptors + push constants
-	VkPipelineLayout physarumGlobalPipelineLayout;
+	// VkPipelineLayout physarumGlobalPipelineLayout;
 
 // pipelines for physarum
 	// agent update
 	VkPipeline agentUpdatePipeline;
+	VkPipelineLayout agentUpdatePipelineLayout;
 
-	// agent raster
-	VkPipeline agentRasterPipeline;
+	// copy/clear blur prep
+	VkPipeline bufferCopyClearPipeline;
+	VkPipelineLayout bufferCopyClearPipelineLayout;
 
-	// buffer blur
-	VkPipeline bufferBlurPipeline;
+	// Blur Operation -> Splitting into two pieces, H and V
+	VkPipeline bufferHBlurPipeline;
+	VkPipelineLayout bufferHBlurPipelineLayout;
+	VkPipeline bufferVBlurPipeline;
+	VkPipelineLayout bufferVBlurPipelineLayout;
 
 	// buffer raster
 	VkPipeline bufferPresentPipeline;
+	VkPipelineLayout bufferPresentPipelineLayout;
 
 	bool resizeRequest { false };
 	bool isInitialized { false };

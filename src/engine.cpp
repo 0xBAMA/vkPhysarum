@@ -606,12 +606,12 @@ void PrometheusInstance::initSyncStructures () {
 }
 
 void PrometheusInstance::initDescriptors  () {
-	//create a descriptor pool that will hold 10 sets with 1 image each
+	//create a descriptor pool that will hold 10 sets with some different contents
 	std::vector< DescriptorAllocatorGrowable::PoolSizeRatio > sizes = {
-		{ VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 3 },
-		{ VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 3 },
-		{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 3 },
-		{ VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 4 },
+		{ VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 6 },
+		{ VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 6 },
+		{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 6 },
+		{ VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 6 },
 	};
 
 	globalDescriptorAllocator.init( device, 10, sizes );
@@ -735,13 +735,6 @@ void PrometheusInstance::initPipelines () {
 	pipelineLayout.pSetLayouts = &physarumGlobalDescriptorSetLayout;
 	pipelineLayout.setLayoutCount = 1;
 
-	// and now we're going to create the pipeline layout shared across all the pipelines
-	VK_CHECK( vkCreatePipelineLayout( device, &pipelineLayout, nullptr, &physarumGlobalPipelineLayout ) );
-
-	mainDeletionQueue.push_function([ & ] () {
-		vkDestroyPipelineLayout( device, physarumGlobalPipelineLayout, nullptr );
-	});
-
 // then there are 4 separate pipelines that need to be created
 
 	{ // Agent Update ( Compute )
@@ -773,43 +766,6 @@ void PrometheusInstance::initPipelines () {
 
 		mainDeletionQueue.push_function( [ & ] () {
 			vkDestroyPipeline( device, agentUpdatePipeline, nullptr );
-		});
-	}
-
-	{ // Agent Raster/Splatting ( Raster )
-		// This is the pipeline doing additive raster, to replace atomic writes
-		VkShaderModule agentRasterFragShader;
-		if ( !vkutil::load_shader_module( "../shaders/agentRaster.frag.glsl.spv", device, &agentRasterFragShader ) ) {
-			fmt::print( "Error when building the Agent Raster fragment shader module\n" );
-		} else {
-			fmt::print( "Agent Raster fragment shader successfully loaded\n" );
-		}
-
-		VkShaderModule agentRasterVertexShader;
-		if ( !vkutil::load_shader_module( "../shaders/agentRaster.vert.glsl.spv", device, &agentRasterVertexShader ) ) {
-			fmt::print( "Error when building the Agent Raster vertex shader module\n" );
-		} else {
-			fmt::print( "Agent Raster vertex shader successfully loaded\n" );
-		}
-
-		PipelineBuilder pipelineBuilder;
-		pipelineBuilder._pipelineLayout = physarumGlobalPipelineLayout;
-		pipelineBuilder.set_shaders( agentRasterVertexShader, agentRasterFragShader );
-		pipelineBuilder.set_input_topology( VK_PRIMITIVE_TOPOLOGY_POINT_LIST );
-		pipelineBuilder.set_polygon_mode( VK_POLYGON_MODE_FILL );
-		pipelineBuilder.set_cull_mode( VK_CULL_MODE_NONE, VK_FRONT_FACE_CLOCKWISE );
-		pipelineBuilder.set_multisampling_none();
-		pipelineBuilder.enable_blending_additive();
-		pipelineBuilder.disable_depthtest();
-		pipelineBuilder.set_color_attachment_format( FloatBufferA.imageFormat );
-		agentRasterPipeline = pipelineBuilder.build_pipeline( device );
-
-		// cleanup
-		vkDestroyShaderModule( device, agentRasterFragShader, nullptr );
-		vkDestroyShaderModule( device, agentRasterVertexShader, nullptr );
-
-		mainDeletionQueue.push_function( [ & ] ()  {
-			vkDestroyPipeline( device, agentRasterPipeline, nullptr );
 		});
 	}
 
@@ -1037,8 +993,8 @@ void PrometheusInstance::physarumFullscreenTriangle ( VkCommandBuffer cmd ) {
 	scissor.extent.height = drawExtent.height;
 	vkCmdSetScissor( cmd, 0, 1, &scissor );
 
-	vkCmdBindDescriptorSets( cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,  physarumGlobalPipelineLayout, 0, 1, &physarumGlobalDescriptorSet, 0, nullptr );
-	vkCmdPushConstants( cmd, physarumGlobalPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof( PushConstants ), &physarumGlobalPushConstant );
+	vkCmdBindDescriptorSets( cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,  bufferPresentPipelineLayout, 0, 1, &physarumGlobalDescriptorSet, 0, nullptr );
+	vkCmdPushConstants( cmd, bufferPresentPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof( PushConstants ), &physarumGlobalPushConstant );
 
 	// launch a draw command to do the fullscreen triangle
 	vkCmdDraw( cmd, 3, 1, 0, 0 );
