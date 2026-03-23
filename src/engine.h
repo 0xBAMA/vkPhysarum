@@ -74,7 +74,21 @@ struct Agent {
 };
 
 struct ComputeEffect {
-	
+	// pipeline is the thing we use to invoke this thing
+	VkPipeline pipeline;
+
+	// pipeline layout gives us what we need for sending push constants and buffer attachments
+	VkPipelineLayout pipelineLayout;
+
+	// this is the descriptor set layout for this particular compute effect (UBO + any SSBOs + any images/textures)
+	VkDescriptorSetLayout descriptorSetLayout;
+	VkDescriptorSet descriptorSet;
+
+	// retained state for the push constants
+	PushConstants pushConstants;
+
+	// so we can have the main loop code local to the declaration
+	std::function< void() > invoke;
 };
 
 class PrometheusInstance {
@@ -89,10 +103,6 @@ public:
 	VkExtent2D FloatBufferResolution{ 2048, 1024 };
 	AllocatedImage FloatBufferA;
 	AllocatedImage FloatBufferB;
-
-// descriptor set layout for these resources:
-	VkDescriptorSetLayout physarumGlobalDescriptorSetLayout;
-	VkDescriptorSet physarumGlobalDescriptorSet;
 
 // the stuff defining the push constants:
 	PushConstants physarumGlobalPushConstant;

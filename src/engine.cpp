@@ -166,40 +166,6 @@ void PrometheusInstance::Draw () {
 	// this image is now going from usage as a texture... to usage as a raster color attachment
 	vkutil::transition_image( cmd, FloatBufferA.image, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL );
 
-// 3
-	// additive raster for the agent locations
-	VkClearValue clearColor = { 0.0f, 0.0f, 0.0f, 1.0f };
-	VkRenderingAttachmentInfo colorAttachment = vkinit::attachment_info( FloatBufferA.imageView, &clearColor, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL );
-	VkRenderingInfo renderInfo = vkinit::rendering_info( FloatBufferResolution, &colorAttachment, nullptr );
-
-	vkCmdBeginRendering( cmd, &renderInfo );
-	vkCmdBindPipeline( cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, agentRasterPipeline );
-
-	//set dynamic viewport and scissor
-	VkViewport viewport = {};
-	viewport.x = 0;
-	viewport.y = 0;
-	viewport.width = float( FloatBufferResolution.width );
-	viewport.height = float( FloatBufferResolution.height );
-	viewport.minDepth = 0.0f;
-	viewport.maxDepth = 1.0f;
-	vkCmdSetViewport( cmd, 0, 1, &viewport );
-
-	VkRect2D scissor = {};
-	scissor.offset.x = 0;
-	scissor.offset.y = 0;
-	scissor.extent.width = FloatBufferResolution.width;
-	scissor.extent.height = FloatBufferResolution.height;
-	vkCmdSetScissor( cmd, 0, 1, &scissor );
-
-	// draw all the agents as points
-	vkCmdBindDescriptorSets( cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,  physarumGlobalPipelineLayout, 0, 1, &physarumGlobalDescriptorSet, 0, nullptr );
-	vkCmdPushConstants( cmd, physarumGlobalPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof( PushConstants ), &physarumGlobalPushConstant );
-
-	// launch a draw command to do the fullscreen triangle
-	vkCmdDraw( cmd, numAgents, 1, 0, 0 );
-	vkCmdEndRendering( cmd );
-
 // 4
 	// barrier for the color attachment...
 	VkImageMemoryBarrier2 colorAttachmentBarrier {
@@ -711,7 +677,7 @@ void PrometheusInstance::initPipelines () {
 		DescriptorLayoutBuilder builder;
 		builder.add_binding( 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER ); // uniform buffer with global data
 		builder.add_binding( 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER ); // SSBO with the agent data
-		// builder.add_binding( 2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER ); // Texture Float Buffer A
+		builder.add_binding( 2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER ); // Texture Float Buffer A
 		builder.add_binding( 3, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE ); // image load/store Float Buffer A
 		builder.add_binding( 4, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE ); // image load/store Float Buffer B
 		physarumGlobalDescriptorSetLayout = builder.build( device, shaderStages );
@@ -726,7 +692,7 @@ void PrometheusInstance::initPipelines () {
 		writer.write_buffer( 0, physarumGlobalUBO.buffer, sizeof( GlobalData ), 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER );
 		writer.write_buffer( 1, simAgentBuffer.buffer, numAgents * sizeof( Agent ), 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER  );
 		writer.write_image( 2, FloatBufferA.imageView, defaultSamplerLinear, VK_IMAGE_LAYOUT_GENERAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER );
-		// writer.write_image( 3, FloatBufferA.imageView, defaultSamplerNearest, VK_IMAGE_LAYOUT_GENERAL, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE );
+		writer.write_image( 3, FloatBufferA.imageView, defaultSamplerNearest, VK_IMAGE_LAYOUT_GENERAL, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE );
 		writer.write_image( 4, FloatBufferB.imageView, defaultSamplerNearest, VK_IMAGE_LAYOUT_GENERAL, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE );
 		writer.update_set( device, physarumGlobalDescriptorSet );
 	}
