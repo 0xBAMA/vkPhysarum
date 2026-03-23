@@ -34,31 +34,6 @@ layout( set = 0, binding = 0 ) uniform globalData {
 
 } GlobalData;
 //=========================================================
-// then the SSBO for the agents
-struct Agent {
-	// simulation parameters
-	float mass;
-	float pad;
-	float drag;
-	float senseDistance;
-	float senseAngle;
-	float turnAngle;
-	float forceAmount; // replaces stepsize
-	float depositAmount;
-
-	// dynamic sim state
-	vec2 position;
-	vec2 velocity;
-};
-//=========================================================
-#ifdef RASTER
-layout ( set = 0, binding = 1, std430 ) readonly buffer AgentBuffer {
-#else
-layout ( set = 0, binding = 1, std430 ) buffer AgentBuffer {
-#endif
-	Agent agents[];
-};
-//=========================================================
 // then is the two float image buffers...
 	// eventually I'd like to go to a sampler array and get this fully bindless...
 //=========================================================

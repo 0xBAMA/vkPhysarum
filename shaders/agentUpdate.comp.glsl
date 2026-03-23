@@ -17,6 +17,27 @@ layout ( local_size_x = 16 ) in;
 	DEPOSIT (now happens via raster)
 */
 
+// then the SSBO for the agents
+struct Agent {
+// simulation parameters
+	float mass;
+	float pad;
+	float drag;
+	float senseDistance;
+	float senseAngle;
+	float turnAngle;
+	float forceAmount; // replaces stepsize
+	float depositAmount;
+
+// dynamic sim state
+	vec2 position;
+	vec2 velocity;
+};
+//=========================================================
+layout ( set = 0, binding = 1, std430 ) buffer AgentBuffer {
+	Agent agents[];
+};
+
 //=========================================================
 #define WANGSEED PushConstants.wangSeed
 #define MYAGENT agents[ gl_GlobalInvocationID.x ]

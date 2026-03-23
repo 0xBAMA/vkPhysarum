@@ -259,16 +259,7 @@ void PrometheusInstance::Draw () {
 
 	vkCmdPipelineBarrier2( cmd, &blurPass2BarrierDependency );
 
-	// put back into undefined layout
-	// vkutil::transition_image( cmd, FloatBufferA.image, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_UNDEFINED );
-
-	// preparing output
-		// put the draw image in a color attachment mode
-	vkutil::transition_image( cmd, drawImage.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL );
-	vkutil::transition_image( cmd, depthImage.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL );
-
-	// drawing the contents of Float Buffer A onto the screen (with some configuration)
-	physarumFullscreenTriangle( cmd );
+	// compute shader to put the desired image into the drawImage...
 
 	// transition the images for the copy
 	vkutil::transition_image( cmd, drawImage.image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL );
