@@ -231,6 +231,19 @@ void PrometheusInstance::MainLoop () {
 			if ( ImGui::Begin( "Edit" ) ) {
 				ImGui::SliderFloat( "Render Scale", &renderScale, 0.3f, 1.0f );
 				ImGui::SliderFloat( "Brightness", &globalData.brightnessScale, 0.0f, 1.0f, "%.7f", ImGuiSliderFlags_Logarithmic );
+
+				if ( ImGui::Button( "Add Preset" ) ) {
+					// add the new one
+					presets.push_back( lastPreset );
+
+					// overwrite the file
+					YAML::Node outputNode;
+					for ( auto& p: presets ) {
+						outputNode.push_back( p );
+					}
+					std::ofstream fout( "../src/presets.yaml" );
+					fout << outputNode;
+				}
 			}
 			ImGui::End();
 
@@ -576,7 +589,6 @@ void PrometheusInstance::initComputePasses () {
 
 			// get a new wang RNG seed
 			AgentUpdate.pushConstants.wangSeed = genWangSeed();
-			AgentUpdate.pushConstants.operation = -1;
 
 			// send the current value of the push constants
 			vkCmdPushConstants( cmd, AgentUpdate.pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof( PushConstants ), &AgentUpdate.pushConstants );
@@ -1127,6 +1139,13 @@ void PrometheusInstance::destroyImage ( const AllocatedImage& img ) {
 }
 
 void PrometheusInstance::initDefaultData () {
+
+	YAML::Node config = YAML::LoadFile( "../src/presets.yaml" );
+	int numEntries = config.size();
+	for ( int i = 0; i < numEntries; i++ ) {
+		presets.push_back( config[ i ].as< uint32_t >() );
+	}
+
 // TEXTURES
 	// 3 default textures, white, grey, black. 1 pixel each
 	uint32_t white = glm::packUnorm4x8( glm::vec4( 1.0f, 1.0f, 1.0f, 1.0f ) );
