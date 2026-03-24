@@ -10,9 +10,6 @@ layout ( local_size_x = 16, local_size_y = 16 ) in;
 layout ( r32f, set = 0, binding = 1 ) uniform image2D stateBuffer;
 layout ( set = 0, binding = 2 ) uniform sampler2D scratchBuffer;
 
-// root pi
-const float sqrtpi = 1.7724538509f;
-
 float blurWeight ( const float pos ) {
 	// divide by number of taps included here instead of in the loop... proportional to the filter radius (ignores a scale factor... still ok?)
 	float normalizationTerm = GlobalData.radius * sqrtpi; // integral of distribution is sqrt(pi/a), we precompute this constant

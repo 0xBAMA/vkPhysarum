@@ -28,8 +28,31 @@ layout( set = 0, binding = 0 ) uniform globalData {
 
 	*/
 
+	// seeding the deterministic wang hash for each Agent
+	uint AgentGenSeed;
+	float AgentGenSpread;
+
+	// diffuse/decay parameterization
 	float decayRate;
 	float radius;
 
+	// visualizer config
+	float brightnessScale;
+
 } GlobalData;
 //=========================================================
+
+#ifndef saturate
+#define saturate(x) clamp(x, 0, 1)
+#endif
+
+#ifndef UINT_MAX
+#define UINT_MAX (0xFFFFFFFF-1)
+#endif
+
+#ifndef PI_DEFINED
+#define PI_DEFINED
+const float pi = 3.141592f;
+const float tau = 2.0f * pi;
+const float sqrtpi = 1.7724538509f;
+#endif

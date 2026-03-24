@@ -62,6 +62,11 @@ vec2 wrap ( vec2 pos ) {
 	if ( pos.y < 0.0f ) pos.y += iS.y;
 	return pos;
 }
+float pheremone ( vec2 pos ) {
+	// need to remap to texturespace... consider adding a jitter here as another agent parameter
+	pos = pos / textureSize( state, 0 ).xy;
+	return texture( state, pos.xy ).r;
+}
 //=========================================================
 void main () {
 	seed = WANGSEED + gl_GlobalInvocationID.x * 69420;
@@ -89,22 +94,33 @@ void main () {
 	} else {
 	// do the regular agent update...
 		// sense taps, reading from the pheremone buffer
+		const vec2 avDir			= normalize( MYAGENT.velocity );
+		const vec2 rightVec			= MYAGENT.senseDistance * rotate( avDir, -MYAGENT.senseAngle );
+		const vec2 middleVec		= MYAGENT.senseDistance * avDir;
+		const vec2 leftVec			= MYAGENT.senseDistance * rotate( avDir,  MYAGENT.senseAngle );
+		const float rightSample		= pheremone( MYAGENT.position + rightVec );
+		const float middleSample	= pheremone( MYAGENT.position + middleVec );
+		const float leftSample		= pheremone( MYAGENT.position + leftVec );
 
-//		float senseTaps[ 3 ] = float[ 3 ](
-//			texture( state, ).r,
-//		);
+		// make a decision on whether to turn left, right, go straight, or a random direction
+		// this can be generalized and simplified, as some sort of weighted sum thing - will bear revisiting
+		vec2 impulseVector = middleVec;
+		if ( middleSample > leftSample && middleSample > rightSample ) {
+			// just retain the existing direction
+		} else if ( middleSample < leftSample && middleSample < rightSample ) { // turn a random direction
+			impulseVector = RandomInUnitDisk();
+		} else if ( rightSample > middleSample && middleSample > leftSample ) { // turn right (positive)
+			impulseVector = rotate( middleVec, MYAGENT.turnAngle );
+		} else if ( leftSample > middleSample && middleSample > rightSample ) { // turn left (negative)
+			impulseVector = rotate( middleVec, -MYAGENT.turnAngle );
+		}
 
-		// turn decision, based on the sense readings
+		// apply impulse to an object of known mass + store back to SSBO
+		vec2 acceleration = impulseVector * MYAGENT.forceAmount / MYAGENT.mass;	// get the resulting acceleration
+		MYAGENT.velocity = MYAGENT.drag * MYAGENT.velocity + acceleration;					// compute the new velocity
+		MYAGENT.position = wrap( MYAGENT.position + MYAGENT.velocity );				// get the new position
 
-		// move the agent based on the current velocity
-		MYAGENT.position += MYAGENT.velocity;
+		// deposit
+		imageAtomicAdd( resolveBuffer, ivec2( MYAGENT.position ), uint( MYAGENT.depositAmount ) );
 	}
-
-	// wrap the position to keep it in-bounds for the raster process
-	if ( clamp( MYAGENT.position, vec2( 0.0f ), BUFFERSIZE ) != MYAGENT.position ) {
-		MYAGENT.position = wrap( MYAGENT.position );
-	}
-
-	// need to tally the contribution for this update
-	imageAtomicAdd( resolveBuffer, ivec2( MYAGENT.position ), uint( 100 + MYAGENT.depositAmount ) );
 }
