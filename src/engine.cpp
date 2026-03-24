@@ -11,6 +11,7 @@
 #include <array>
 #include <thread>
 #include <chrono>
+#include <fstream>
 
 #define VMA_IMPLEMENTATION
 #include "vk_mem_alloc.h"
@@ -18,6 +19,8 @@
 #include "third_party/imgui/imgui.h"
 #include "third_party/imgui/imgui_impl_sdl2.h"
 #include "third_party/imgui/imgui_impl_vulkan.h"
+
+#include "third_party/yaml-cpp/include/yaml-cpp/yaml.h"
 
 #include <glm/gtx/transform.hpp>
 

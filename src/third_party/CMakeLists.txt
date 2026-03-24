@@ -6,6 +6,8 @@ add_library(vma INTERFACE)
 
 add_library(stb_image INTERFACE)
 
+add_subdirectory( yaml-cpp )
+
 add_subdirectory(fastgltf)
 add_subdirectory(fmt EXCLUDE_FROM_ALL)
 add_subdirectory(SDL EXCLUDE_FROM_ALL)
@@ -13,7 +15,7 @@ add_subdirectory(SDL EXCLUDE_FROM_ALL)
 target_sources(vkbootstrap PRIVATE 
   vkbootstrap/VkBootstrap.h
   vkbootstrap/VkBootstrap.cpp
-  )
+)
 
 target_include_directories(vkbootstrap PUBLIC vkbootstrap)
 target_link_libraries(vkbootstrap PUBLIC Vulkan::Vulkan $<$<BOOL:UNIX>:${CMAKE_DL_LIBS}>)
