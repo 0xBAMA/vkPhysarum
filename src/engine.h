@@ -49,8 +49,13 @@ struct GlobalData {
 	glm::uvec2 floatBufferResolution;
 	glm::uvec2 presentBufferResolution;
 
+	uint32_t AgentGenSeed = 69420;
+	float AgentGenSpread;
+
 	float decayRate = 0.9f;
 	float radius = 1.5f;
+
+	float brightnessScale = 0.001f;
 };
 
 // smallest scope CPU->GPU passing of information
@@ -109,8 +114,11 @@ inline uint32_t genWangSeed () {
 class PrometheusInstance {
 public:
 
+	uint32_t lastPreset;
+	std::vector< uint32_t > presets;
+
 // physarum data/storage resources
-	uint32_t numAgents = 20000 * 256;
+	uint32_t numAgents = 30000 * 256;
 	AllocatedBuffer simAgentBuffer;
 	AllocatedBuffer physarumGlobalUBO;
 	GlobalData globalData; // goes into the UBO

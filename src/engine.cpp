@@ -197,6 +197,11 @@ void PrometheusInstance::MainLoop () {
 				quit = true;
 			}
 
+			// triggering an agent reset
+			if ( e.type == SDL_KEYDOWN && e.key.keysym.scancode == SDL_SCANCODE_R ) {
+				lastPreset = AgentUpdate.pushConstants.operation = genWangSeed();
+			}
+
 			if ( e.type == SDL_WINDOWEVENT ) {
 				if ( e.window.event == SDL_WINDOWEVENT_MINIMIZED ) {
 					stopRendering = true;
@@ -607,6 +612,9 @@ void PrometheusInstance::initComputePasses () {
 			};
 
 			vkCmdPipelineBarrier2( cmd, &barrierDependency );
+
+			if ( AgentUpdate.pushConstants.operation != 0 )
+				AgentUpdate.pushConstants.operation = 0; // reset
 		};
 	}
 

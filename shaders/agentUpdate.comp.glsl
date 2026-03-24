@@ -66,12 +66,26 @@ vec2 wrap ( vec2 pos ) {
 void main () {
 	seed = WANGSEED + gl_GlobalInvocationID.x * 69420;
 
-	if ( PushConstants.operation == -1 ) {
-		// generating new, random values
+	if ( PushConstants.operation != 0 ) {
+		// generating new, random values from the UBO seed
+		uint seedCache = seed;
+		seed = PushConstants.operation;
+
+		// calculate the deterministic starting values
+		MYAGENT.mass = mix( 1.5f, 30.0f, NormalizedRandomFloat() );
+		MYAGENT.drag = mix( 0.5f, 1.0f, NormalizedRandomFloat() );
+		MYAGENT.senseDistance = mix( 5.0f, 20.0f, NormalizedRandomFloat() );
+		MYAGENT.senseAngle = mix( 0.0f, tau, NormalizedRandomFloat() );
+		MYAGENT.turnAngle = mix( 0.0f, tau, NormalizedRandomFloat() );
+		MYAGENT.forceAmount = mix( 0.1f, 2.0f, NormalizedRandomFloat() );
+		MYAGENT.depositAmount = mix( 10.0f, 1000.0f, NormalizedRandomFloat() );
+
+		// these things are not deterministic
+		seed = seedCache;
 		MYAGENT.position.x = BUFFERSIZE.x * NormalizedRandomFloat();
 		MYAGENT.position.y = BUFFERSIZE.y * NormalizedRandomFloat();
-
 		MYAGENT.velocity = 0.1f * normalize( RandomInUnitDisk() );
+
 	} else {
 	// do the regular agent update...
 		// sense taps, reading from the pheremone buffer
