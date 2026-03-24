@@ -32,8 +32,8 @@ void PrometheusInstance::Init () {
 
 	SDL_Rect viewRect;
 	SDL_GetDisplayBounds( 0, &viewRect );
-	windowExtent.width = viewRect.w;
-	windowExtent.height = viewRect.h;
+	windowExtent.width = 3 * viewRect.w / 4;
+	windowExtent.height = 3 * viewRect.h / 4;
 
 	window = SDL_CreateWindow(
 		"Prometheus",
