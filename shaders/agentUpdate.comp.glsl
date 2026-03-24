@@ -80,7 +80,6 @@ void main () {
 
 		// move the agent based on the current velocity
 		MYAGENT.position += MYAGENT.velocity;
-
 	}
 
 	// wrap the position to keep it in-bounds for the raster process

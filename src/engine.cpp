@@ -543,6 +543,7 @@ void PrometheusInstance::initComputePasses () {
 
 			// deletors for the pipeline layout + pipeline
 			mainDeletionQueue.push_function( [ & ] () {
+				vkDestroyDescriptorSetLayout( device, AgentUpdate.descriptorSetLayout, nullptr );
 				vkDestroyPipelineLayout( device, AgentUpdate.pipelineLayout, nullptr );
 				vkDestroyPipeline( device, AgentUpdate.pipeline, nullptr );
 			});
@@ -609,68 +610,410 @@ void PrometheusInstance::initComputePasses () {
 		{ // descriptor layout
 			DescriptorLayoutBuilder builder;
 			builder.add_binding( 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER ); // global config UBO
-			builder.add_binding( 1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE );
-			builder.add_binding( 2, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE );
-			drawImageDescriptorLayout = builder.build( device, VK_SHADER_STAGE_COMPUTE_BIT );
+			builder.add_binding( 1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE ); // Resolve buffer
+			builder.add_binding( 2, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE ); // State buffer
+			BufferCopyClear.descriptorSetLayout = builder.build( device, VK_SHADER_STAGE_COMPUTE_BIT );
 		}
 
-		// descriptor allocation
+		{ // pipeline layout + compute pipeline
+			VkPushConstantRange pushConstant{};
+			pushConstant.offset = 0;
+			pushConstant.size = sizeof( PushConstants );
+			pushConstant.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 
-		// pipeline layout + compute pipeline
+			VkPipelineLayoutCreateInfo computeLayout{};
+			computeLayout.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+			computeLayout.pNext = nullptr;
+			computeLayout.pSetLayouts = &BufferCopyClear.descriptorSetLayout;
+			computeLayout.setLayoutCount = 1;
+			computeLayout.pPushConstantRanges = &pushConstant;
+			computeLayout.pushConstantRangeCount = 1;
+
+			VK_CHECK( vkCreatePipelineLayout( device, &computeLayout, nullptr, &BufferCopyClear.pipelineLayout ) );
+
+			VkShaderModule BufferCopyClearShader;
+			if ( !vkutil::load_shader_module("../shaders/bufferCopyClear.comp.glsl.spv", device, &BufferCopyClearShader ) ) {
+				fmt::print( "Error when building the Buffer Copy/Clear Compute Shader\n" );
+			}
+
+			VkPipelineShaderStageCreateInfo stageinfo{};
+			stageinfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+			stageinfo.pNext = nullptr;
+			stageinfo.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+			stageinfo.module = BufferCopyClearShader;
+			stageinfo.pName = "main";
+
+			VkComputePipelineCreateInfo computePipelineCreateInfo{};
+			computePipelineCreateInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+			computePipelineCreateInfo.pNext = nullptr;
+			computePipelineCreateInfo.layout = BufferCopyClear.pipelineLayout;
+			computePipelineCreateInfo.stage = stageinfo;
+
+			VK_CHECK( vkCreateComputePipelines( device, VK_NULL_HANDLE, 1, &computePipelineCreateInfo, nullptr, &BufferCopyClear.pipeline ) );
+			vkDestroyShaderModule( device, BufferCopyClearShader, nullptr );
+
+			// deletors for the pipeline layout + pipeline
+			mainDeletionQueue.push_function( [ & ] () {
+				vkDestroyDescriptorSetLayout( device, BufferCopyClear.descriptorSetLayout, nullptr );
+				vkDestroyPipelineLayout( device, BufferCopyClear.pipelineLayout, nullptr );
+				vkDestroyPipeline( device, BufferCopyClear.pipeline, nullptr );
+			});
+		}
 
 		// invoke() lambda
+		BufferCopyClear.invoke = [ & ]( VkCommandBuffer cmd ) {
+			BufferCopyClear.descriptorSet = getCurrentFrame().frameDescriptors.allocate( device, BufferCopyClear.descriptorSetLayout );
+			{
+				DescriptorWriter writer;
+				writer.write_buffer( 0, physarumGlobalUBO.buffer, sizeof( GlobalData ), 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER );
+				writer.write_image( 1, ResolveImage.imageView, defaultSamplerNearest, VK_IMAGE_LAYOUT_GENERAL, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE );
+				writer.write_image( 2, StateImage.imageView, defaultSamplerNearest, VK_IMAGE_LAYOUT_GENERAL, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE );
+				writer.update_set( device, BufferCopyClear.descriptorSet );
+			}
 
+			vkCmdBindPipeline( cmd, VK_PIPELINE_BIND_POINT_COMPUTE, BufferCopyClear.pipeline );
+
+			// bind the descriptor set, as just recorded
+			vkCmdBindDescriptorSets( cmd, VK_PIPELINE_BIND_POINT_COMPUTE, BufferCopyClear.pipelineLayout, 0, 1, &BufferCopyClear.descriptorSet, 0, nullptr );
+
+			// get a new wang RNG seed
+			BufferCopyClear.pushConstants.wangSeed = genWangSeed();
+
+			// send the current value of the push constants
+			vkCmdPushConstants( cmd, BufferCopyClear.pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof( PushConstants ), &BufferCopyClear.pushConstants );
+
+			// and the actual compute dispatch for the simulation agents
+			vkCmdDispatch( cmd, ( FloatBufferResolution.width + 15 ) / 16, ( FloatBufferResolution.height + 15 ) / 16, 1 );
+
+			// also needs to include access barrier for the resolve image
+			VkImageMemoryBarrier2 barrier {
+				.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+
+				.srcStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+				.srcAccessMask = VK_ACCESS_2_SHADER_WRITE_BIT,
+
+				.dstStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+				.dstAccessMask = VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_SHADER_WRITE_BIT,
+
+				// now the blur has finished, we are using the filtered reads until the next agent raster
+				.oldLayout = VK_IMAGE_LAYOUT_GENERAL,
+				.newLayout = VK_IMAGE_LAYOUT_GENERAL,
+
+				.image = StateImage.image,
+				.subresourceRange = {
+					VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1
+				}
+			};
+
+			VkDependencyInfo barrierDependency {
+				.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+				.imageMemoryBarrierCount = 1,
+				.pImageMemoryBarriers = &barrier
+			};
+
+			vkCmdPipelineBarrier2( cmd, &barrierDependency );
+		};
 	}
 
 	{ // BlurH
 		{ // descriptor layout
 			DescriptorLayoutBuilder builder;
 			builder.add_binding( 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER ); // global config UBO
-			builder.add_binding( 1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE );
-			builder.add_binding( 2, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE );
-			drawImageDescriptorLayout = builder.build( device, VK_SHADER_STAGE_COMPUTE_BIT );
+			builder.add_binding( 1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE ); // State Buffer
+			builder.add_binding( 2, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE ); // Scratch Buffer
+			BufferBlurH.descriptorSetLayout = builder.build( device, VK_SHADER_STAGE_COMPUTE_BIT );
 		}
 
-		// descriptor allocation
+		{ // pipeline layout + compute pipeline
+			VkPushConstantRange pushConstant{};
+			pushConstant.offset = 0;
+			pushConstant.size = sizeof( PushConstants );
+			pushConstant.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 
-		// pipeline layout + compute pipeline
+			VkPipelineLayoutCreateInfo computeLayout{};
+			computeLayout.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+			computeLayout.pNext = nullptr;
+			computeLayout.pSetLayouts = &BufferBlurH.descriptorSetLayout;
+			computeLayout.setLayoutCount = 1;
+			computeLayout.pPushConstantRanges = &pushConstant;
+			computeLayout.pushConstantRangeCount = 1;
+
+			VK_CHECK( vkCreatePipelineLayout( device, &computeLayout, nullptr, &BufferBlurH.pipelineLayout ) );
+
+			VkShaderModule BufferBlurHShader;
+			if ( !vkutil::load_shader_module("../shaders/bufferBlurH.comp.glsl.spv", device, &BufferBlurHShader ) ) {
+				fmt::print( "Error when building the Buffer Blur (H) Compute Shader\n" );
+			}
+
+			VkPipelineShaderStageCreateInfo stageinfo{};
+			stageinfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+			stageinfo.pNext = nullptr;
+			stageinfo.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+			stageinfo.module = BufferBlurHShader;
+			stageinfo.pName = "main";
+
+			VkComputePipelineCreateInfo computePipelineCreateInfo{};
+			computePipelineCreateInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+			computePipelineCreateInfo.pNext = nullptr;
+			computePipelineCreateInfo.layout = BufferBlurH.pipelineLayout;
+			computePipelineCreateInfo.stage = stageinfo;
+
+			VK_CHECK( vkCreateComputePipelines( device, VK_NULL_HANDLE, 1, &computePipelineCreateInfo, nullptr, &BufferBlurH.pipeline ) );
+			vkDestroyShaderModule( device, BufferBlurHShader, nullptr );
+
+			// deletors for the pipeline layout + pipeline
+			mainDeletionQueue.push_function( [ & ] () {
+				vkDestroyDescriptorSetLayout( device, BufferBlurH.descriptorSetLayout, nullptr );
+				vkDestroyPipelineLayout( device, BufferBlurH.pipelineLayout, nullptr );
+				vkDestroyPipeline( device, BufferBlurH.pipeline, nullptr );
+			});
+		}
 
 		// invoke() lambda
+		BufferBlurH.invoke = [ & ]( VkCommandBuffer cmd ) {
+			BufferBlurH.descriptorSet = getCurrentFrame().frameDescriptors.allocate( device, BufferBlurH.descriptorSetLayout );
+			{
+				DescriptorWriter writer;
+				writer.write_buffer( 0, physarumGlobalUBO.buffer, sizeof( GlobalData ), 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER );
+				writer.write_image( 1, StateImage.imageView, defaultSamplerNearest, VK_IMAGE_LAYOUT_GENERAL, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE );
+				writer.write_image( 2, ScratchImage.imageView, defaultSamplerNearest, VK_IMAGE_LAYOUT_GENERAL, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE );
+				writer.update_set( device, BufferBlurH.descriptorSet );
+			}
 
+			vkCmdBindPipeline( cmd, VK_PIPELINE_BIND_POINT_COMPUTE, BufferBlurH.pipeline );
+
+			// bind the descriptor set, as just recorded
+			vkCmdBindDescriptorSets( cmd, VK_PIPELINE_BIND_POINT_COMPUTE, BufferBlurH.pipelineLayout, 0, 1, &BufferBlurH.descriptorSet, 0, nullptr );
+
+			// get a new wang RNG seed
+			BufferBlurH.pushConstants.wangSeed = genWangSeed();
+
+			// send the current value of the push constants
+			vkCmdPushConstants( cmd, BufferBlurH.pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof( PushConstants ), &BufferBlurH.pushConstants );
+
+			// and the actual compute dispatch for the simulation agents
+			vkCmdDispatch( cmd, ( FloatBufferResolution.width + 15 ) / 16, ( FloatBufferResolution.height + 15 ) / 16, 1 );
+
+			// also needs to include access barrier for the resolve image
+			VkImageMemoryBarrier2 barrier {
+				.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+
+				.srcStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+				.srcAccessMask = VK_ACCESS_2_SHADER_WRITE_BIT,
+
+				.dstStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+				.dstAccessMask = VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_SHADER_WRITE_BIT,
+
+				// now the blur has finished, we are using the filtered reads until the next agent raster
+				.oldLayout = VK_IMAGE_LAYOUT_GENERAL,
+				.newLayout = VK_IMAGE_LAYOUT_GENERAL,
+
+				.image = ScratchImage.image,
+				.subresourceRange = {
+					VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1
+				}
+			};
+
+			VkDependencyInfo barrierDependency {
+				.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+				.imageMemoryBarrierCount = 1,
+				.pImageMemoryBarriers = &barrier
+			};
+
+			vkCmdPipelineBarrier2( cmd, &barrierDependency );
+		};
 	}
 
 	{ // BlurV
 		{ // descriptor layout
 			DescriptorLayoutBuilder builder;
 			builder.add_binding( 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER ); // global config UBO
-			builder.add_binding( 1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE );
-			builder.add_binding( 2, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE );
-			drawImageDescriptorLayout = builder.build( device, VK_SHADER_STAGE_COMPUTE_BIT );
+			builder.add_binding( 1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE ); // State Buffer
+			builder.add_binding( 2, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE ); // Scratch Buffer
+			BufferBlurV.descriptorSetLayout = builder.build( device, VK_SHADER_STAGE_COMPUTE_BIT );
 		}
 
-		// descriptor allocation
+		{ // pipeline layout + compute pipeline
+			VkPushConstantRange pushConstant{};
+			pushConstant.offset = 0;
+			pushConstant.size = sizeof( PushConstants );
+			pushConstant.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 
-		// pipeline layout + compute pipeline
+			VkPipelineLayoutCreateInfo computeLayout{};
+			computeLayout.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+			computeLayout.pNext = nullptr;
+			computeLayout.pSetLayouts = &BufferBlurV.descriptorSetLayout;
+			computeLayout.setLayoutCount = 1;
+			computeLayout.pPushConstantRanges = &pushConstant;
+			computeLayout.pushConstantRangeCount = 1;
+
+			VK_CHECK( vkCreatePipelineLayout( device, &computeLayout, nullptr, &BufferBlurV.pipelineLayout ) );
+
+			VkShaderModule BufferBlurVShader;
+			if ( !vkutil::load_shader_module("../shaders/bufferBlurV.comp.glsl.spv", device, &BufferBlurVShader ) ) {
+				fmt::print( "Error when building the Buffer Blur (V) Compute Shader\n" );
+			}
+
+			VkPipelineShaderStageCreateInfo stageinfo{};
+			stageinfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+			stageinfo.pNext = nullptr;
+			stageinfo.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+			stageinfo.module = BufferBlurVShader;
+			stageinfo.pName = "main";
+
+			VkComputePipelineCreateInfo computePipelineCreateInfo{};
+			computePipelineCreateInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+			computePipelineCreateInfo.pNext = nullptr;
+			computePipelineCreateInfo.layout = BufferBlurV.pipelineLayout;
+			computePipelineCreateInfo.stage = stageinfo;
+
+			VK_CHECK( vkCreateComputePipelines( device, VK_NULL_HANDLE, 1, &computePipelineCreateInfo, nullptr, &BufferBlurV.pipeline ) );
+			vkDestroyShaderModule( device, BufferBlurVShader, nullptr );
+
+			// deletors for the pipeline layout + pipeline
+			mainDeletionQueue.push_function( [ & ] () {
+				vkDestroyDescriptorSetLayout( device, BufferBlurV.descriptorSetLayout, nullptr );
+				vkDestroyPipelineLayout( device, BufferBlurV.pipelineLayout, nullptr );
+				vkDestroyPipeline( device, BufferBlurV.pipeline, nullptr );
+			});
+		}
 
 		// invoke() lambda
+		BufferBlurV.invoke = [ & ]( VkCommandBuffer cmd ) {
+			BufferBlurV.descriptorSet = getCurrentFrame().frameDescriptors.allocate( device, BufferBlurV.descriptorSetLayout );
+			{
+				DescriptorWriter writer;
+				writer.write_buffer( 0, physarumGlobalUBO.buffer, sizeof( GlobalData ), 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER );
+				writer.write_image( 1, StateImage.imageView, defaultSamplerNearest, VK_IMAGE_LAYOUT_GENERAL, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE );
+				writer.write_image( 2, ScratchImage.imageView, defaultSamplerNearest, VK_IMAGE_LAYOUT_GENERAL, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE );
+				writer.update_set( device, BufferBlurV.descriptorSet );
+			}
 
+			vkCmdBindPipeline( cmd, VK_PIPELINE_BIND_POINT_COMPUTE, BufferBlurV.pipeline );
+
+			// bind the descriptor set, as just recorded
+			vkCmdBindDescriptorSets( cmd, VK_PIPELINE_BIND_POINT_COMPUTE, BufferBlurV.pipelineLayout, 0, 1, &BufferBlurV.descriptorSet, 0, nullptr );
+
+			// get a new wang RNG seed
+			BufferBlurV.pushConstants.wangSeed = genWangSeed();
+
+			// send the current value of the push constants
+			vkCmdPushConstants( cmd, BufferBlurV.pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof( PushConstants ), &BufferBlurV.pushConstants );
+
+			// and the actual compute dispatch for the simulation agents
+			// vkCmdDispatch( cmd, ( FloatBufferResolution.width + 15 ) / 16, ( FloatBufferResolution.height + 15 ) / 16, 1 );
+			vkCmdDispatch( cmd, FloatBufferResolution.width / 16, FloatBufferResolution.height / 16, 1 );
+
+			// also needs to include access barrier for the resolve image
+			VkImageMemoryBarrier2 barrier {
+				.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+
+				.srcStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+				.srcAccessMask = VK_ACCESS_2_SHADER_WRITE_BIT,
+
+				.dstStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+				.dstAccessMask = VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_SHADER_WRITE_BIT,
+
+				// now the blur has finished, we are using the filtered reads until the next agent raster
+				.oldLayout = VK_IMAGE_LAYOUT_GENERAL,
+				.newLayout = VK_IMAGE_LAYOUT_GENERAL,
+
+				.image = StateImage.image,
+				.subresourceRange = {
+					VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1
+				}
+			};
+
+			VkDependencyInfo barrierDependency {
+				.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+				.imageMemoryBarrierCount = 1,
+				.pImageMemoryBarriers = &barrier
+			};
+
+			vkCmdPipelineBarrier2( cmd, &barrierDependency );
+		};
 	}
 
 	{ // Present
 		{ // descriptor layout
 			DescriptorLayoutBuilder builder;
 			builder.add_binding( 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER ); // global config UBO
-			builder.add_binding( 1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE );
-			builder.add_binding( 2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER );
-			drawImageDescriptorLayout = builder.build( device, VK_SHADER_STAGE_COMPUTE_BIT );
+			builder.add_binding( 1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE ); // draw image
+			builder.add_binding( 2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER ); // State Buffer -> linear filter
+			BufferPresent.descriptorSetLayout = builder.build( device, VK_SHADER_STAGE_COMPUTE_BIT );
 		}
 
-		// descriptor allocation
+		{ // pipeline layout + compute pipeline
+			VkPushConstantRange pushConstant{};
+			pushConstant.offset = 0;
+			pushConstant.size = sizeof( PushConstants );
+			pushConstant.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 
-		// pipeline layout + compute pipeline
+			VkPipelineLayoutCreateInfo computeLayout{};
+			computeLayout.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+			computeLayout.pNext = nullptr;
+			computeLayout.pSetLayouts = &BufferPresent.descriptorSetLayout;
+			computeLayout.setLayoutCount = 1;
+			computeLayout.pPushConstantRanges = &pushConstant;
+			computeLayout.pushConstantRangeCount = 1;
+
+			VK_CHECK( vkCreatePipelineLayout( device, &computeLayout, nullptr, &BufferPresent.pipelineLayout ) );
+
+			VkShaderModule BufferPresentShader;
+			if ( !vkutil::load_shader_module("../shaders/bufferPresent.comp.glsl.spv", device, &BufferPresentShader ) ) {
+				fmt::print( "Error when building the Buffer Present Compute Shader\n" );
+			}
+
+			VkPipelineShaderStageCreateInfo stageinfo{};
+			stageinfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+			stageinfo.pNext = nullptr;
+			stageinfo.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+			stageinfo.module = BufferPresentShader;
+			stageinfo.pName = "main";
+
+			VkComputePipelineCreateInfo computePipelineCreateInfo{};
+			computePipelineCreateInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+			computePipelineCreateInfo.pNext = nullptr;
+			computePipelineCreateInfo.layout = BufferPresent.pipelineLayout;
+			computePipelineCreateInfo.stage = stageinfo;
+
+			VK_CHECK( vkCreateComputePipelines( device, VK_NULL_HANDLE, 1, &computePipelineCreateInfo, nullptr, &BufferPresent.pipeline ) );
+			vkDestroyShaderModule( device, BufferPresentShader, nullptr );
+
+			// deletors for the pipeline layout + pipeline
+			mainDeletionQueue.push_function( [ & ] () {
+				vkDestroyDescriptorSetLayout( device, BufferPresent.descriptorSetLayout, nullptr );
+				vkDestroyPipelineLayout( device, BufferPresent.pipelineLayout, nullptr );
+				vkDestroyPipeline( device, BufferPresent.pipeline, nullptr );
+			});
+		}
 
 		// invoke() lambda
+		BufferPresent.invoke = [ & ]( VkCommandBuffer cmd ) {
+			BufferPresent.descriptorSet = getCurrentFrame().frameDescriptors.allocate( device, BufferPresent.descriptorSetLayout );
+			{
+				DescriptorWriter writer;
+				writer.write_buffer( 0, physarumGlobalUBO.buffer, sizeof( GlobalData ), 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER );
+				writer.write_image( 1, drawImage.imageView, defaultSamplerNearest, VK_IMAGE_LAYOUT_GENERAL, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE );
+				writer.write_image( 2, StateImage.imageView, defaultSamplerLinear, VK_IMAGE_LAYOUT_GENERAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER );
+				writer.update_set( device, BufferPresent.descriptorSet );
+			}
 
+			vkCmdBindPipeline( cmd, VK_PIPELINE_BIND_POINT_COMPUTE, BufferPresent.pipeline );
+
+			// bind the descriptor set, as just recorded
+			vkCmdBindDescriptorSets( cmd, VK_PIPELINE_BIND_POINT_COMPUTE, BufferPresent.pipelineLayout, 0, 1, &BufferPresent.descriptorSet, 0, nullptr );
+
+			// get a new wang RNG seed
+			BufferPresent.pushConstants.wangSeed = genWangSeed();
+
+			// send the current value of the push constants
+			vkCmdPushConstants( cmd, BufferPresent.pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof( PushConstants ), &BufferPresent.pushConstants );
+
+			// and the actual compute dispatch for the simulation agents
+			// vkCmdDispatch( cmd, ( FloatBufferResolution.width + 15 ) / 16, ( FloatBufferResolution.height + 15 ) / 16, 1 );
+			vkCmdDispatch( cmd, FloatBufferResolution.width / 16, FloatBufferResolution.height / 16, 1 );
+		};
 	}
 }
 
