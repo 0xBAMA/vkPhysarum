@@ -7,14 +7,14 @@
 #include "random.h"
 //=========================================================
 // size of a workgroup for compute
-layout ( local_size_x = 16 ) in;
+layout ( local_size_x = 256 ) in;
 //=========================================================
 
 /* Agent Update:
 	SENSE - read the linearly filtered texture
 	DECIDE - turn towards the highest concentration
 	MOVE - you have a new direction, take a step that way
-	DEPOSIT (now happens via raster)
+	DEPOSIT - imageAtomicAdd
 */
 
 //=========================================================
@@ -38,6 +38,10 @@ struct Agent {
 layout ( set = 0, binding = 1, std430 ) buffer AgentBuffer {
 	Agent agents[];
 };
+
+layout ( set = 0, binding = 2 ) uniform sampler2D state;
+
+layout ( r32ui, set = 0, binding = 3 ) uniform uimage2D resolveBuffer;
 //=========================================================
 #define WANGSEED PushConstants.wangSeed
 #define MYAGENT agents[ gl_GlobalInvocationID.x ]
@@ -85,5 +89,5 @@ void main () {
 	}
 
 	// need to tally the contribution for this update
-
+	imageAtomicAdd( resolveBuffer, ivec2( MYAGENT.position ), uint( MYAGENT.depositAmount ) );
 }

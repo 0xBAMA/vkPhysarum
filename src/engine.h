@@ -88,7 +88,7 @@ struct ComputeEffect {
 	PushConstants pushConstants;
 
 	// so we can have the main loop code local to the declaration
-	std::function< void() > invoke;
+	std::function< void( VkCommandBuffer cmd ) > invoke;
 };
 
 inline uint32_t genWangSeed () {
@@ -107,7 +107,7 @@ class PrometheusInstance {
 public:
 
 // physarum data/storage resources
-	uint32_t numAgents = 1000000 * 16;
+	uint32_t numAgents = 50000 * 256;
 	AllocatedBuffer simAgentBuffer;
 	AllocatedBuffer physarumGlobalUBO;
 	GlobalData globalData; // goes into the UBO
@@ -213,7 +213,7 @@ private:
 	void initCommandStructures ();
 	void initSyncStructures ();
 	void initDescriptors ();
-	void initPipelines ();
+	void initComputePasses ();
 	void initImgui ();
 	void initResources ();
 
