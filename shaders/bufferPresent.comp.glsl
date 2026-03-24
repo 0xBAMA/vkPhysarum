@@ -18,5 +18,5 @@ void main () {
 	vec2 loc = ( gl_GlobalInvocationID.xy + vec2( 0.5f ) ) / imageSize( image ).xy;
 
 	// Sample the image and store the result
-	imageStore( image, ivec2( gl_GlobalInvocationID.xy ), texture( state, loc ) );
+	imageStore( image, ivec2( gl_GlobalInvocationID.xy ), GlobalData.brightnessScale * texture( state, loc ) );
 }

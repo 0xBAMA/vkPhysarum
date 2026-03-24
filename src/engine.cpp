@@ -230,8 +230,7 @@ void PrometheusInstance::MainLoop () {
 
 			if ( ImGui::Begin( "Edit" ) ) {
 				ImGui::SliderFloat( "Render Scale", &renderScale, 0.3f, 1.0f );
-				// ImGui::ColorPicker3( "Color 1", ( float * ) &computeEffects[ 0 ].data.data1[ 0 ] );
-				// ImGui::ColorPicker3( "Color 2", ( float * ) &computeEffects[ 0 ].data.data2[ 0 ] );
+				ImGui::SliderFloat( "Brightness", &globalData.brightnessScale, 0.0f, 1.0f, "%.7f", ImGuiSliderFlags_Logarithmic );
 			}
 			ImGui::End();
 
