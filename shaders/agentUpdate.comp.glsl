@@ -76,6 +76,10 @@ void main () {
 	// do the regular agent update...
 		// sense taps, reading from the pheremone buffer
 
+//		float senseTaps[ 3 ] = float[ 3 ](
+//			texture( state, ).r,
+//		);
+
 		// turn decision, based on the sense readings
 
 		// move the agent based on the current velocity
@@ -88,5 +92,5 @@ void main () {
 	}
 
 	// need to tally the contribution for this update
-	imageAtomicAdd( resolveBuffer, ivec2( MYAGENT.position ), uint( MYAGENT.depositAmount ) );
+	imageAtomicAdd( resolveBuffer, ivec2( MYAGENT.position ), uint( 100 + MYAGENT.depositAmount ) );
 }

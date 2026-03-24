@@ -471,7 +471,7 @@ void PrometheusInstance::initResources () {
 	VkExtent3D bufferExtent = { FloatBufferResolution.width, FloatBufferResolution.height, 1 };
 	ResolveImage = createImage( bufferExtent, VK_FORMAT_R32_UINT, VK_IMAGE_USAGE_STORAGE_BIT );
 	StateImage = createImage( bufferExtent, VK_FORMAT_R32_SFLOAT, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT );
-	ScratchImage = createImage( bufferExtent, VK_FORMAT_R32_SFLOAT, VK_IMAGE_USAGE_STORAGE_BIT );
+	ScratchImage = createImage( bufferExtent, VK_FORMAT_R32_SFLOAT, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT );
 
 	// make sure to clean up at the end
 	mainDeletionQueue.push_function([ & ] () {
@@ -569,6 +569,7 @@ void PrometheusInstance::initComputePasses () {
 
 			// get a new wang RNG seed
 			AgentUpdate.pushConstants.wangSeed = genWangSeed();
+			AgentUpdate.pushConstants.operation = -1;
 
 			// send the current value of the push constants
 			vkCmdPushConstants( cmd, AgentUpdate.pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof( PushConstants ), &AgentUpdate.pushConstants );
@@ -719,7 +720,7 @@ void PrometheusInstance::initComputePasses () {
 		{ // descriptor layout
 			DescriptorLayoutBuilder builder;
 			builder.add_binding( 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER ); // global config UBO
-			builder.add_binding( 1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE ); // State Buffer
+			builder.add_binding( 1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER ); // State Buffer
 			builder.add_binding( 2, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE ); // Scratch Buffer
 			BufferBlurH.descriptorSetLayout = builder.build( device, VK_SHADER_STAGE_COMPUTE_BIT );
 		}
@@ -775,7 +776,7 @@ void PrometheusInstance::initComputePasses () {
 			{
 				DescriptorWriter writer;
 				writer.write_buffer( 0, physarumGlobalUBO.buffer, sizeof( GlobalData ), 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER );
-				writer.write_image( 1, StateImage.imageView, defaultSamplerNearest, VK_IMAGE_LAYOUT_GENERAL, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE );
+				writer.write_image( 1, StateImage.imageView, defaultSamplerLinear, VK_IMAGE_LAYOUT_GENERAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER );
 				writer.write_image( 2, ScratchImage.imageView, defaultSamplerNearest, VK_IMAGE_LAYOUT_GENERAL, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE );
 				writer.update_set( device, BufferBlurH.descriptorSet );
 			}
@@ -829,7 +830,7 @@ void PrometheusInstance::initComputePasses () {
 			DescriptorLayoutBuilder builder;
 			builder.add_binding( 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER ); // global config UBO
 			builder.add_binding( 1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE ); // State Buffer
-			builder.add_binding( 2, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE ); // Scratch Buffer
+			builder.add_binding( 2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER ); // Scratch Buffer
 			BufferBlurV.descriptorSetLayout = builder.build( device, VK_SHADER_STAGE_COMPUTE_BIT );
 		}
 
@@ -885,7 +886,7 @@ void PrometheusInstance::initComputePasses () {
 				DescriptorWriter writer;
 				writer.write_buffer( 0, physarumGlobalUBO.buffer, sizeof( GlobalData ), 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER );
 				writer.write_image( 1, StateImage.imageView, defaultSamplerNearest, VK_IMAGE_LAYOUT_GENERAL, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE );
-				writer.write_image( 2, ScratchImage.imageView, defaultSamplerNearest, VK_IMAGE_LAYOUT_GENERAL, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE );
+				writer.write_image( 2, ScratchImage.imageView, defaultSamplerLinear, VK_IMAGE_LAYOUT_GENERAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER );
 				writer.update_set( device, BufferBlurV.descriptorSet );
 			}
 
@@ -1011,8 +1012,8 @@ void PrometheusInstance::initComputePasses () {
 			vkCmdPushConstants( cmd, BufferPresent.pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof( PushConstants ), &BufferPresent.pushConstants );
 
 			// and the actual compute dispatch for the simulation agents
-			// vkCmdDispatch( cmd, ( FloatBufferResolution.width + 15 ) / 16, ( FloatBufferResolution.height + 15 ) / 16, 1 );
-			vkCmdDispatch( cmd, FloatBufferResolution.width / 16, FloatBufferResolution.height / 16, 1 );
+			vkCmdDispatch( cmd, ( drawExtent.width + 15 ) / 16, ( drawExtent.height + 15 ) / 16, 1 );
+			// vkCmdDispatch( cmd, FloatBufferResolution.width / 16, FloatBufferResolution.height / 16, 1 );
 		};
 	}
 }

@@ -48,6 +48,9 @@ struct frameData_t {
 struct GlobalData {
 	glm::uvec2 floatBufferResolution;
 	glm::uvec2 presentBufferResolution;
+
+	float decayRate = 0.9f;
+	float radius = 1.5f;
 };
 
 // smallest scope CPU->GPU passing of information
