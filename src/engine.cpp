@@ -99,18 +99,6 @@ void PrometheusInstance::Draw () {
 	GlobalData* uniformData = ( GlobalData * ) physarumGlobalUBO.allocation->GetMappedData();
 	*uniformData = globalData;
 
-	// updating the push constants, as needed:
-
-	static thread_local std::mt19937 seedRNG( [] {
-	// RNG ( mostly for generating GPU-side RNG seed)
-		std::random_device rd;
-		std::seed_seq seq{  rd(), rd(), rd(), rd(), rd(), rd(), rd(), rd() };
-		return std::mt19937( seq );
-	} () );
-
-	physarumGlobalPushConstant.wangSeed = std::uniform_int_distribution< uint32_t >{}( seedRNG );
-	// float x = std::uniform_real_distribution< float >( min, max )( seedRNG );
-
 	// start the command buffer recording
 	VK_CHECK( vkBeginCommandBuffer( cmd, &cmdBeginInfo ) );
 

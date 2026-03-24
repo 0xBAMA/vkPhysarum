@@ -91,6 +91,18 @@ struct ComputeEffect {
 	std::function< void() > invoke;
 };
 
+inline uint32_t genWangSeed () {
+	static thread_local std::mt19937 seedRNG( [] {
+	// RNG ( mostly for generating GPU-side RNG seed)
+		std::random_device rd;
+		std::seed_seq seq{  rd(), rd(), rd(), rd(), rd(), rd(), rd(), rd() };
+		return std::mt19937( seq );
+	} () );
+
+	// float x = std::uniform_real_distribution< float >( min, max )( seedRNG );
+	return std::uniform_int_distribution< uint32_t >{}( seedRNG );
+}
+
 class PrometheusInstance {
 public:
 
