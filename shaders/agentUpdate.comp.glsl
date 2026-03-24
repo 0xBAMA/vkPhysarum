@@ -17,7 +17,8 @@ layout ( local_size_x = 16 ) in;
 	DEPOSIT (now happens via raster)
 */
 
-// then the SSBO for the agents
+//=========================================================
+// then the SSBO for the agents (only accessed by this shader)
 struct Agent {
 // simulation parameters
 	float mass;
@@ -37,7 +38,6 @@ struct Agent {
 layout ( set = 0, binding = 1, std430 ) buffer AgentBuffer {
 	Agent agents[];
 };
-
 //=========================================================
 #define WANGSEED PushConstants.wangSeed
 #define MYAGENT agents[ gl_GlobalInvocationID.x ]
@@ -77,9 +77,13 @@ void main () {
 		// move the agent based on the current velocity
 		MYAGENT.position += MYAGENT.velocity;
 
-		// wrap the position to keep it in-bounds for the raster process
-		if ( clamp( MYAGENT.position, vec2( 0.0f ), BUFFERSIZE ) != MYAGENT.position ) {
-			MYAGENT.position = wrap( MYAGENT.position );
-		}
 	}
+
+	// wrap the position to keep it in-bounds for the raster process
+	if ( clamp( MYAGENT.position, vec2( 0.0f ), BUFFERSIZE ) != MYAGENT.position ) {
+		MYAGENT.position = wrap( MYAGENT.position );
+	}
+
+	// need to tally the contribution for this update
+
 }

@@ -6,11 +6,5 @@
 #include "common.h"
 
 void main () {
-	if ( PushConstants.blurOperation == 0 ) {
-		// horizontal first
 
-	} else {
-		// then vertical
-
-	}
 }

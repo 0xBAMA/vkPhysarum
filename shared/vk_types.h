@@ -37,16 +37,6 @@ struct AllocatedBuffer {
 	VmaAllocationInfo info;
 };
 
-//> vbuf_types
-// push constants for our mesh object draws
-struct GPUDrawPushConstants {
-	glm::ivec2 floatBufferResolution;
-	glm::ivec2 presentBufferResolution;
-	uint32_t wangSeed;
-	uint32_t operation;
-};
-//< vbuf_types
-
 //> intro
 #define VK_CHECK(x)                                                     \
     do {                                                                \

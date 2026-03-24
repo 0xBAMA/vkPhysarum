@@ -573,34 +573,9 @@ void PrometheusInstance::initDescriptors  () {
 
 	globalDescriptorAllocator.init( device, 10, sizes );
 
-	{ //make the descriptor set layout for our compute draw
-		DescriptorLayoutBuilder builder;
-		builder.add_binding( 0, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE );
-		drawImageDescriptorLayout = builder.build( device, VK_SHADER_STAGE_COMPUTE_BIT );
-	}
-
-	drawImageDescriptors = globalDescriptorAllocator.allocate( device, drawImageDescriptorLayout );
-
-	VkDescriptorImageInfo imgInfo{};
-	imgInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
-	imgInfo.imageView = drawImage.imageView;
-
-	VkWriteDescriptorSet drawImageWrite = {};
-	drawImageWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-	drawImageWrite.pNext = nullptr;
-
-	drawImageWrite.dstBinding = 0;
-	drawImageWrite.dstSet = drawImageDescriptors;
-	drawImageWrite.descriptorCount = 1;
-	drawImageWrite.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-	drawImageWrite.pImageInfo = &imgInfo;
-
-	vkUpdateDescriptorSets( device, 1, &drawImageWrite, 0, nullptr );
-
 	//make sure both the descriptor allocator and the new layout get cleaned up properly
 	mainDeletionQueue.push_function( [ & ] () {
 		globalDescriptorAllocator.destroy_pools( device );
-		vkDestroyDescriptorSetLayout( device, drawImageDescriptorLayout, nullptr );
 	});
 
 	for ( int i = 0; i < FRAME_OVERLAP; i++ ) {
@@ -623,7 +598,6 @@ void PrometheusInstance::initDescriptors  () {
 
 void PrometheusInstance::initResources () {
 // API resource allocation:
-
 	// create the buffer for the UBO
 	physarumGlobalUBO = createBuffer( sizeof( GlobalData ), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU );
 
@@ -632,165 +606,36 @@ void PrometheusInstance::initResources () {
 
 	// create the two Float Buffer images ( A + B )
 	VkExtent3D bufferExtent = { FloatBufferResolution.width, FloatBufferResolution.height, 1 };
-	FloatBufferA = createImage( bufferExtent, VK_FORMAT_R32_UINT, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT  );
-	// FloatBufferA = createImage( bufferExtent, VK_FORMAT_R32_SFLOAT, VK_IMAGE_USAGE_STORAGE_BIT );
-	FloatBufferB = createImage( bufferExtent, VK_FORMAT_R32_SFLOAT, VK_IMAGE_USAGE_STORAGE_BIT );
+	ResolveImage = createImage( bufferExtent, VK_FORMAT_R32_UINT, VK_IMAGE_USAGE_STORAGE_BIT );
+	StateImage = createImage( bufferExtent, VK_FORMAT_R32_SFLOAT, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT );
+	ScratchImage = createImage( bufferExtent, VK_FORMAT_R32_SFLOAT, VK_IMAGE_USAGE_STORAGE_BIT );
 
 	// make sure to clean up at the end
 	mainDeletionQueue.push_function([ & ] () {
+		// destroying buffers
 		destroyBuffer( physarumGlobalUBO );
 		destroyBuffer( simAgentBuffer );
-		destroyImage( FloatBufferA );
-		destroyImage( FloatBufferB );
+
+		// destroying images
+		destroyImage( ResolveImage );
+		destroyImage( StateImage );
+		destroyImage( ScratchImage );
 	});
 }
 
 void PrometheusInstance::initPipelines () {
-// we share a lot of the init across all pipelines...
+// we have 5 to setup now:
+	// Agent Update
 
-// the actual pipeline layout itself consists of two parts - push constants + descriptor set layout
-	VkPipelineLayoutCreateInfo pipelineLayout = vkinit::pipeline_layout_create_info();
-	VkShaderStageFlags shaderStages = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT; // making these accessible to all shader stages (compute + raster)
+	// Copy/Clear
 
-	// configuration for the push constants
-	VkPushConstantRange pushConstants = {};
-	pushConstants.offset = 0;
-	pushConstants.size = sizeof( PushConstants );
-	pushConstants.stageFlags = shaderStages;
-	pipelineLayout.pPushConstantRanges = &pushConstants;
-	pipelineLayout.pushConstantRangeCount = 1;
+	// BlurH
 
-	// and some default contents for the push constants
-	globalData.floatBufferResolution = glm::uvec2( FloatBufferResolution.width, FloatBufferResolution.height );
-	globalData.presentBufferResolution = glm::uvec2( drawExtent.width, drawExtent.height );
+	// BlurV
 
-	{ // configure descriptor set layout -> descriptor set allocation
-		DescriptorLayoutBuilder builder;
-		builder.add_binding( 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER ); // uniform buffer with global data
-		builder.add_binding( 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER ); // SSBO with the agent data
-		builder.add_binding( 2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER ); // Texture Float Buffer A
-		builder.add_binding( 3, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE ); // image load/store Float Buffer A
-		builder.add_binding( 4, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE ); // image load/store Float Buffer B
-		physarumGlobalDescriptorSetLayout = builder.build( device, shaderStages );
-		mainDeletionQueue.push_function([ & ] () {
-			vkDestroyDescriptorSetLayout( device, physarumGlobalDescriptorSetLayout, nullptr );
-		});
+	// Present
 
-		// I think we can actually go ahead and do the static allocation of the descriptor set + write the values into it
-		physarumGlobalDescriptorSet = globalDescriptorAllocator.allocate( device, physarumGlobalDescriptorSetLayout );
 
-		DescriptorWriter writer;
-		writer.write_buffer( 0, physarumGlobalUBO.buffer, sizeof( GlobalData ), 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER );
-		writer.write_buffer( 1, simAgentBuffer.buffer, numAgents * sizeof( Agent ), 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER  );
-		writer.write_image( 2, FloatBufferA.imageView, defaultSamplerLinear, VK_IMAGE_LAYOUT_GENERAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER );
-		writer.write_image( 3, FloatBufferA.imageView, defaultSamplerNearest, VK_IMAGE_LAYOUT_GENERAL, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE );
-		writer.write_image( 4, FloatBufferB.imageView, defaultSamplerNearest, VK_IMAGE_LAYOUT_GENERAL, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE );
-		writer.update_set( device, physarumGlobalDescriptorSet );
-	}
-
-	// and we are set up with a single descriptor set containing everything (UBO+SSBO+Textures)
-	pipelineLayout.pSetLayouts = &physarumGlobalDescriptorSetLayout;
-	pipelineLayout.setLayoutCount = 1;
-
-// then there are 4 separate pipelines that need to be created
-
-	{ // Agent Update ( Compute )
-		// This is the compute shader that does all the simulation update logic
-		VkShaderModule agentUpdateShader;
-		const char * shaderPath = "../shaders/agentUpdate.comp.glsl.spv";
-		if ( !vkutil::load_shader_module( shaderPath, device, &agentUpdateShader ) ) {
-			fmt::print( "Error when building the Agent Update shader\n" );
-		}
-
-		VkPipelineShaderStageCreateInfo stageinfo{};
-		stageinfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-		stageinfo.pNext = nullptr;
-		stageinfo.stage = VK_SHADER_STAGE_COMPUTE_BIT;
-		stageinfo.module = agentUpdateShader;
-		stageinfo.pName = "main";
-
-		VkComputePipelineCreateInfo computePipelineCreateInfo{};
-		computePipelineCreateInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
-		computePipelineCreateInfo.pNext = nullptr;
-		computePipelineCreateInfo.layout = physarumGlobalPipelineLayout;
-		computePipelineCreateInfo.stage = stageinfo;
-
-		// create the pipeline
-		VK_CHECK( vkCreateComputePipelines( device, VK_NULL_HANDLE, 1, &computePipelineCreateInfo, nullptr, &agentUpdatePipeline ) );
-
-		// cleanup
-		vkDestroyShaderModule( device, agentUpdateShader, nullptr );
-
-		mainDeletionQueue.push_function( [ & ] () {
-			vkDestroyPipeline( device, agentUpdatePipeline, nullptr );
-		});
-	}
-
-	{ // Buffer Blur ( Compute )
-		// Additive result needs to be blurred A->B->A with attenuation factor applied
-		VkShaderModule bufferBlurShader;
-		const char * shaderPath = "../shaders/agentUpdate.comp.glsl.spv";
-		if ( !vkutil::load_shader_module( shaderPath, device, &bufferBlurShader ) ) {
-			fmt::print( "Error when building the Agent Update shader\n" );
-		}
-
-		VkPipelineShaderStageCreateInfo stageinfo{};
-		stageinfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-		stageinfo.pNext = nullptr;
-		stageinfo.stage = VK_SHADER_STAGE_COMPUTE_BIT;
-		stageinfo.module = bufferBlurShader;
-		stageinfo.pName = "main";
-
-		VkComputePipelineCreateInfo computePipelineCreateInfo{};
-		computePipelineCreateInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
-		computePipelineCreateInfo.pNext = nullptr;
-		computePipelineCreateInfo.layout = physarumGlobalPipelineLayout;
-		computePipelineCreateInfo.stage = stageinfo;
-
-		// create the pipeline
-		VK_CHECK( vkCreateComputePipelines( device, VK_NULL_HANDLE, 1, &computePipelineCreateInfo, nullptr, &bufferBlurPipeline ) );
-		vkDestroyShaderModule( device, bufferBlurShader, nullptr );
-		mainDeletionQueue.push_function( [ & ] () {
-			vkDestroyPipeline( device, bufferBlurPipeline, nullptr );
-		});
-	}
-
-	{ // Buffer Present ( Raster )
-		// Bare bones fullscreen triangle to show the simulation buffer
-		VkShaderModule bufferPresentFragShader;
-		if ( !vkutil::load_shader_module( "../shaders/bufferPresent.frag.glsl.spv", device, &bufferPresentFragShader ) ) {
-			fmt::print( "Error when building the Buffer Present fragment shader module\n" );
-		} else {
-			fmt::print( "Buffer Present fragment shader successfully loaded\n" );
-		}
-
-		VkShaderModule bufferPresentVertexShader;
-		if ( !vkutil::load_shader_module( "../shaders/bufferPresent.vert.glsl.spv", device, &bufferPresentVertexShader ) ) {
-			fmt::print( "Error when building the Buffer Present vertex shader module\n" );
-		} else {
-			fmt::print( "Buffer Present vertex shader successfully loaded\n" );
-		}
-
-		PipelineBuilder pipelineBuilder;
-		pipelineBuilder._pipelineLayout = physarumGlobalPipelineLayout;
-		pipelineBuilder.set_shaders( bufferPresentVertexShader, bufferPresentFragShader );
-		pipelineBuilder.set_input_topology( VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST );
-		pipelineBuilder.set_polygon_mode( VK_POLYGON_MODE_FILL );
-		pipelineBuilder.set_cull_mode( VK_CULL_MODE_NONE, VK_FRONT_FACE_CLOCKWISE );
-		pipelineBuilder.set_multisampling_none();
-		pipelineBuilder.disable_blending();
-		pipelineBuilder.set_color_attachment_format( drawImage.imageFormat );
-		pipelineBuilder.set_depth_format( depthImage.imageFormat );
-		bufferPresentPipeline = pipelineBuilder.build_pipeline( device );
-
-		// cleanup
-		vkDestroyShaderModule( device, bufferPresentFragShader, nullptr );
-		vkDestroyShaderModule( device, bufferPresentVertexShader, nullptr );
-
-		mainDeletionQueue.push_function( [ & ] ()  {
-			vkDestroyPipeline( device, bufferPresentPipeline, nullptr );
-		});
-	}
 }
 
 AllocatedBuffer PrometheusInstance::createBuffer ( size_t allocSize, VkBufferUsageFlags usage, VmaMemoryUsage memoryUsage ) {
@@ -922,40 +767,6 @@ void PrometheusInstance::initDefaultData () {
 		destroyImage( greyImage );
 		destroyImage( blackImage );
 	});
-}
-
-void PrometheusInstance::physarumFullscreenTriangle ( VkCommandBuffer cmd ) {
-	//begin a render pass  connected to our draw image
-	VkRenderingAttachmentInfo colorAttachment = vkinit::attachment_info( drawImage.imageView, nullptr, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL );
-	VkRenderingAttachmentInfo depthAttachment = vkinit::depth_attachment_info( depthImage.imageView, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL );
-	VkRenderingInfo renderInfo = vkinit::rendering_info( drawExtent, &colorAttachment, &depthAttachment );
-
-	vkCmdBeginRendering( cmd, &renderInfo );
-	vkCmdBindPipeline( cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, bufferPresentPipeline );
-
-	//set dynamic viewport and scissor
-	VkViewport viewport = {};
-	viewport.x = 0;
-	viewport.y = 0;
-	viewport.width = float( drawExtent.width );
-	viewport.height = float( drawExtent.height );
-	viewport.minDepth = 0.0f;
-	viewport.maxDepth = 1.0f;
-	vkCmdSetViewport( cmd, 0, 1, &viewport );
-
-	VkRect2D scissor = {};
-	scissor.offset.x = 0;
-	scissor.offset.y = 0;
-	scissor.extent.width = drawExtent.width;
-	scissor.extent.height = drawExtent.height;
-	vkCmdSetScissor( cmd, 0, 1, &scissor );
-
-	vkCmdBindDescriptorSets( cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,  bufferPresentPipelineLayout, 0, 1, &physarumGlobalDescriptorSet, 0, nullptr );
-	vkCmdPushConstants( cmd, bufferPresentPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof( PushConstants ), &physarumGlobalPushConstant );
-
-	// launch a draw command to do the fullscreen triangle
-	vkCmdDraw( cmd, 3, 1, 0, 0 );
-	vkCmdEndRendering( cmd );
 }
 
 void PrometheusInstance::initImgui () {

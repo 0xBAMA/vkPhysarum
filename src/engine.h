@@ -74,7 +74,7 @@ struct Agent {
 };
 
 struct ComputeEffect {
-	// pipeline is the thing we use to invoke this thing
+	// pipeline is the thing we use to invoke this shader pass
 	VkPipeline pipeline;
 
 	// pipeline layout gives us what we need for sending push constants and buffer attachments
@@ -100,35 +100,20 @@ public:
 	AllocatedBuffer physarumGlobalUBO;
 	GlobalData globalData; // goes into the UBO
 
+	// the simulation buffer resolution
 	VkExtent2D FloatBufferResolution{ 2048, 1024 };
-	AllocatedImage FloatBufferA;
-	AllocatedImage FloatBufferB;
+	AllocatedImage ResolveImage;
+	AllocatedImage StateImage;
+	AllocatedImage ScratchImage;
 
-// the stuff defining the push constants:
-	PushConstants physarumGlobalPushConstant;
+	// wrapping the compute passes which are involved
+	ComputeEffect AgentUpdate;
+	ComputeEffect BufferCopyClear;
+	ComputeEffect BufferBlurH;
+	ComputeEffect BufferBlurV;
+	ComputeEffect BufferPresent;
 
-// and the pipeline layout which contains the information for the descriptors + push constants
-	// VkPipelineLayout physarumGlobalPipelineLayout;
-
-// pipelines for physarum
-	// agent update
-	VkPipeline agentUpdatePipeline;
-	VkPipelineLayout agentUpdatePipelineLayout;
-
-	// copy/clear blur prep
-	VkPipeline bufferCopyClearPipeline;
-	VkPipelineLayout bufferCopyClearPipelineLayout;
-
-	// Blur Operation -> Splitting into two pieces, H and V
-	VkPipeline bufferHBlurPipeline;
-	VkPipelineLayout bufferHBlurPipelineLayout;
-	VkPipeline bufferVBlurPipeline;
-	VkPipelineLayout bufferVBlurPipelineLayout;
-
-	// buffer raster
-	VkPipeline bufferPresentPipeline;
-	VkPipelineLayout bufferPresentPipelineLayout;
-
+	// engine triggers
 	bool resizeRequest { false };
 	bool isInitialized { false };
 	bool stopRendering { false };
@@ -222,7 +207,6 @@ private:
 
 	// main loop helpers
 	void drawImgui ( VkCommandBuffer cmd, VkImageView targetImageView );
-	void physarumFullscreenTriangle ( VkCommandBuffer cmd );
 
 	// swapchain helpers
 	void resizeSwapchain ();
