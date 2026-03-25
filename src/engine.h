@@ -124,7 +124,7 @@ public:
 	GlobalData globalData; // goes into the UBO
 
 	// the simulation buffer resolution
-	VkExtent2D FloatBufferResolution{ 2048, 1024 };
+	VkExtent2D FloatBufferResolution{ 4096, 2048 };
 	AllocatedImage ResolveImage;
 	AllocatedImage StateImage;
 	AllocatedImage ScratchImage;

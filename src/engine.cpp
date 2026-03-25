@@ -1141,8 +1141,8 @@ void PrometheusInstance::destroyImage ( const AllocatedImage& img ) {
 void PrometheusInstance::initDefaultData () {
 
 	YAML::Node config = YAML::LoadFile( "../src/presets.yaml" );
-	int numEntries = config.size();
-	for ( int i = 0; i < numEntries; i++ ) {
+	size_t numEntries = config.size();
+	for ( size_t i = 0; i < numEntries; i++ ) {
 		presets.push_back( config[ i ].as< uint32_t >() );
 	}
 
@@ -1166,6 +1166,8 @@ void PrometheusInstance::initDefaultData () {
 
 	sampl.magFilter = VK_FILTER_LINEAR;
 	sampl.minFilter = VK_FILTER_LINEAR;
+	// sampl.magFilter = VK_FILTER_CUBIC_EXT;
+	// sampl.minFilter = VK_FILTER_CUBIC_EXT;
 	vkCreateSampler( device, &sampl, nullptr, &defaultSamplerLinear );
 
 	mainDeletionQueue.push_function([&](){
